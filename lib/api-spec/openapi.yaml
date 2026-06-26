@@ -1,0 +1,458 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: Trading app API — candles, symbols, indicators
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: symbols
+    description: Symbol operations
+  - name: candles
+    description: Candle operations
+  - name: indicators
+    description: Indicator operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status, exchange connection status, and active subscriptions
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /symbols:
+    get:
+      operationId: getSymbols
+      tags: [symbols]
+      summary: Get supported symbols
+      description: Returns supported normalized symbols and available intervals
+      responses:
+        "200":
+          description: Symbols list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SymbolsResponse"
+
+  /candles:
+    get:
+      operationId: getCandles
+      tags: [candles]
+      summary: Get historical candles
+      description: Returns historical OHLCV candles for a symbol and interval
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+          description: "Normalized symbol, e.g. BTC/USD"
+        - name: interval
+          in: query
+          required: true
+          schema:
+            type: string
+          description: "Candle interval, e.g. 1m, 5m, 1h"
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 500
+          description: Number of candles to return
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: "Fetch candles before this unix timestamp (exclusive)"
+      responses:
+        "200":
+          description: Candles response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandlesResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Unsupported symbol or interval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /indicators/rsi:
+    get:
+      operationId: getRsi
+      tags: [indicators]
+      summary: Get RSI indicator values
+      description: Returns RSI series for a symbol and interval using Wilder's smoothing method
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: interval
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 14
+        - name: source
+          in: query
+          required: false
+          schema:
+            type: string
+            default: close
+            enum: [close, open, high, low, hl2, hlc3, ohlc4]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 500
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: "Fetch RSI candles before this unix timestamp (exclusive)"
+      responses:
+        "200":
+          description: RSI values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RsiResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /indicators/rsi/advanced:
+    get:
+      operationId: getRsiAdvanced
+      tags: [indicators]
+      summary: Get advanced RSI overlays
+      description: Returns RSI with optional overlays including MA, Bollinger Bands, Stochastic RSI, divergences, and multi-timeframe values
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: interval
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 14
+        - name: source
+          in: query
+          required: false
+          schema:
+            type: string
+            default: close
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 500
+        - name: include_sma
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: sma_period
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 14
+        - name: include_ema
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: ema_period
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 14
+        - name: include_wma
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: wma_period
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 14
+        - name: include_stoch_rsi
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: include_bb
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: include_divergence
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: include_mtf
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: before
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: "Fetch RSI candles before this unix timestamp (exclusive)"
+      responses:
+        "200":
+          description: Advanced RSI data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RsiAdvancedResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        exchanges:
+          type: object
+          additionalProperties:
+            type: string
+        active_subscriptions:
+          type: integer
+
+    SymbolsResponse:
+      type: object
+      required: [symbols, intervals]
+      properties:
+        symbols:
+          type: array
+          items:
+            type: string
+        intervals:
+          type: array
+          items:
+            type: string
+        default_intervals:
+          type: array
+          items:
+            type: string
+
+    Candle:
+      type: object
+      required: [time, open, high, low, close, volume]
+      properties:
+        time:
+          type: integer
+          description: Unix timestamp in seconds
+        open:
+          type: number
+        high:
+          type: number
+        low:
+          type: number
+        close:
+          type: number
+        volume:
+          type: number
+        is_closed:
+          type: ["boolean", "null"]
+
+    CandlesResponse:
+      type: object
+      required: [symbol, interval, candles]
+      properties:
+        symbol:
+          type: string
+        interval:
+          type: string
+        candles:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candle"
+
+    RsiPoint:
+      type: object
+      required: [time]
+      properties:
+        time:
+          type: integer
+        value:
+          type: ["number", "null"]
+
+    RsiResponse:
+      type: object
+      required: [symbol, interval, period, source, rsi]
+      properties:
+        symbol:
+          type: string
+        interval:
+          type: string
+        period:
+          type: integer
+        source:
+          type: string
+        rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/RsiPoint"
+
+    BollingerBandsPoint:
+      type: object
+      required: [time]
+      properties:
+        time:
+          type: integer
+        upper:
+          type: ["number", "null"]
+        middle:
+          type: ["number", "null"]
+        lower:
+          type: ["number", "null"]
+
+    StochRsiPoint:
+      type: object
+      required: [time]
+      properties:
+        time:
+          type: integer
+        k:
+          type: ["number", "null"]
+        d:
+          type: ["number", "null"]
+
+    DivergenceMarker:
+      type: object
+      required: [time, type]
+      properties:
+        time:
+          type: integer
+        type:
+          type: string
+          enum: [bullish, bearish]
+        price:
+          type: number
+        rsi_value:
+          type: number
+
+    MultiTimeframeRsiEntry:
+      type: object
+      required: [interval]
+      properties:
+        interval:
+          type: string
+        value:
+          type: ["number", "null"]
+
+    RsiAdvancedResponse:
+      type: object
+      required: [symbol, interval, period, source, rsi]
+      properties:
+        symbol:
+          type: string
+        interval:
+          type: string
+        period:
+          type: integer
+        source:
+          type: string
+        rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/RsiPoint"
+        sma_rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/RsiPoint"
+        ema_rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/RsiPoint"
+        wma_rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/RsiPoint"
+        bollinger_bands:
+          type: array
+          items:
+            $ref: "#/components/schemas/BollingerBandsPoint"
+        stoch_rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/StochRsiPoint"
+        divergences:
+          type: array
+          items:
+            $ref: "#/components/schemas/DivergenceMarker"
+        mtf_rsi:
+          type: array
+          items:
+            $ref: "#/components/schemas/MultiTimeframeRsiEntry"
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

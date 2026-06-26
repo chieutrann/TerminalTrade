@@ -1,0 +1,4 @@
+- [Lightweight Charts v5 API](lightweight-charts-v5.md) — breaking v4→v5: use `chart.addSeries(SeriesClass, opts)` not `chart.addCandlestickSeries()`
+- [Coinbase public APIs](coinbase-public-apis.md) — no-auth REST + WebSocket; exchange.coinbase.com not api.coinbase.com/v3/brokerage
+- [Chart time-sync disposal](chart-time-sync-disposal.md) — unsubscribe handlers + try-catch on setVisibleRange to avoid "Value is null" on disposed charts
+- [API client deep imports](api-client-imports.md) — always import from `@workspace/api-client-react` root; deep src paths break module resolution

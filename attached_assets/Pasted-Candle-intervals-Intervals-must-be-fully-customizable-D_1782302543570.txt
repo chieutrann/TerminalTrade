@@ -1,0 +1,116 @@
+Candle intervals:
+Intervals must be fully customizable.
+
+Default intervals:
+- 1s
+- 5s
+- 15s
+- 30s
+- 1m
+- 3m
+- 5m
+- 15m
+- 30m
+- 1h
+- 4h
+- 1d
+
+Custom interval requirements:
+- Users can create custom intervals from the frontend.
+- Supported units:
+  - seconds: s
+  - minutes: m
+  - hours: h
+  - days: d
+- Examples:
+  - 10s
+  - 45s
+  - 2m
+  - 7m
+  - 90m
+  - 6h
+  - 2d
+
+Backend interval behavior:
+- If the exchange natively supports the requested interval, use the native exchange kline/candle stream.
+- If the exchange does not support the requested interval, aggregate candles server-side from a smaller base interval.
+- For custom intervals, choose the smallest practical base stream:
+  - second-based intervals should aggregate from trade/ticker streams if available
+  - minute-based intervals should aggregate from 1m candles or trades
+  - hour/day intervals should aggregate from 1m or 5m candles depending on performance
+- Candle boundaries must align to Unix timestamps.
+- Example:
+  - A 7m candle should start at timestamps divisible by 420 seconds.
+  - A 45s candle should start at timestamps divisible by 45 seconds.
+- Aggregated candles must produce accurate:
+  - open
+  - high
+  - low
+  - close
+  - volume
+  - start time
+  - close status
+
+Frontend interval UI:
+- Include a default interval dropdown.
+- Include a custom interval input.
+- Validate interval format before sending it to the backend.
+- Allow users to save favorite custom intervals.
+- Persist custom intervals in local storage.
+- On interval change:
+  1. unsubscribe from the previous candle stream
+  2. clear the current chart
+  3. fetch historical candles for the new interval
+  4. subscribe to the new live candle stream
+  5. recalculate RSI and all enabled indicators
+
+Backend validation:
+- Accept interval strings matching this pattern:
+  ^[1-9][0-9]*(s|m|h|d)$
+- Reject invalid intervals with a clear error.
+- Add configurable limits:
+  - minimum interval: 1s
+  - maximum interval: 30d
+  - maximum historical candles returned: 5000
+- Prevent extremely expensive custom intervals from overloading the backend.
+
+Historical custom candles:
+- If custom interval candles are not stored, build them from lower-timeframe historical candles.
+- Cache aggregated custom candles.
+- Store frequently used custom intervals if persistence is enabled.
+
+WebSocket custom interval message:
+Client sends:
+{
+  "type": "subscribe",
+  "symbol": "BTC/USD",
+  "interval": "7m"
+}
+
+Server streams:
+{
+  "type": "candle",
+  "symbol": "BTC/USD",
+  "interval": "7m",
+  "candle": {
+    "time": 1710000000,
+    "open": 68000.0,
+    "high": 68120.0,
+    "low": 67950.0,
+    "close": 68080.0,
+    "volume": 12.45,
+    "is_closed": false
+  }
+}
+
+Testing for custom intervals:
+Add tests for:
+- valid interval parsing
+- invalid interval rejection
+- 45s candle aggregation
+- 7m candle aggregation
+- 90m candle aggregation
+- correct candle boundary alignment
+- correct OHLCV aggregation
+- WebSocket subscription to custom intervals
+- RSI calculation on custom interval candles

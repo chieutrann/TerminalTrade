@@ -1,0 +1,325 @@
+Build a full-stack trading desktop web app similar to a TradingView-style interface.
+
+Core goal:
+Create a professional live crypto charting desktop focused ONLY on live candle prices for:
+- BTC/USD
+- BTC/USDT
+- BTC/USDC
+- ETH/USD
+- ETH/USDT
+- ETH/USDC
+
+Do NOT add order placement, portfolio management, exchange login, leverage, trading execution, backtesting, paper trading, news, social feeds, or any unnecessary features.
+
+Tech stack:
+Frontend:
+- React + TypeScript
+- Vite or Next.js
+- TradingView Lightweight Charts
+- Tailwind CSS
+- Zustand or Redux Toolkit for state
+- WebSocket client for live candles
+
+Backend:
+- Python 3.11+
+- FastAPI
+- WebSockets
+- Pydantic models
+- asyncio
+- httpx/aiohttp/websockets
+- Optional: Redis for candle cache and pub/sub
+- Optional: PostgreSQL or TimescaleDB for historical candle persistence
+
+Market data:
+- Use exchange adapters.
+- Use Coinbase Advanced Trade WebSocket for USD pairs where available, for example BTC-USD and ETH-USD.
+- Use Binance Spot WebSocket kline streams for USDT and USDC pairs where available, for example BTCUSDT, ETHUSDT, BTCUSDC, ETHUSDC.
+- At startup, validate which pairs are actually supported by the chosen exchange using exchange metadata or product endpoints.
+- Never hardcode unsupported pairs silently.
+- If a requested pair is unavailable, return a clear backend error to the frontend.
+- Normalize all symbols into this frontend format:
+  BTC/USD
+  BTC/USDT
+  BTC/USDC
+  ETH/USD
+  ETH/USDT
+  ETH/USDC
+
+Required candle intervals:
+- 1m
+- 3m
+- 5m
+- 15m
+- 30m
+- 1h
+- 4h
+- 1d
+
+Backend requirements:
+Create a FastAPI backend with these endpoints:
+
+1. GET /health
+Return backend status, exchange connection status, and active subscriptions.
+
+2. GET /symbols
+Return supported normalized symbols and available intervals.
+
+3. GET /candles
+Query params:
+- symbol: string
+- interval: string
+- limit: number, default 500
+Return historical OHLCV candles in this shape:
+{
+  "symbol": "BTC/USD",
+  "interval": "1m",
+  "candles": [
+    {
+      "time": 1710000000,
+      "open": 68000.0,
+      "high": 68120.0,
+      "low": 67950.0,
+      "close": 68080.0,
+      "volume": 12.45
+    }
+  ]
+}
+
+4. WebSocket /ws/candles
+Client sends:
+{
+  "type": "subscribe",
+  "symbol": "BTC/USD",
+  "interval": "1m"
+}
+
+Server streams:
+{
+  "type": "candle",
+  "symbol": "BTC/USD",
+  "interval": "1m",
+  "candle": {
+    "time": 1710000000,
+    "open": 68000.0,
+    "high": 68120.0,
+    "low": 67950.0,
+    "close": 68080.0,
+    "volume": 12.45,
+    "is_closed": false
+  }
+}
+
+5. GET /indicators/rsi
+Query params:
+- symbol
+- interval
+- period, default 14
+- source, default close
+- limit, default 500
+Return RSI series.
+
+6. GET /indicators/rsi/advanced
+Support multiple RSI-based overlays:
+- RSI
+- RSI moving average
+- RSI EMA
+- RSI WMA
+- RSI Bollinger Bands
+- Stochastic RSI
+- RSI divergence markers
+- overbought/oversold zones
+- multi-timeframe RSI values
+
+RSI calculation requirements:
+Implement RSI using Wilder’s original smoothing method, not a simple rolling average after initialization.
+
+Algorithm:
+- Use close prices by default.
+- delta = current_close - previous_close
+- gain = max(delta, 0)
+- loss = abs(min(delta, 0))
+- Initial average gain = SMA of first N gains
+- Initial average loss = SMA of first N losses
+- Subsequent average gain = ((previous_avg_gain * (N - 1)) + current_gain) / N
+- Subsequent average loss = ((previous_avg_loss * (N - 1)) + current_loss) / N
+- RS = average_gain / average_loss
+- RSI = 100 - (100 / (1 + RS))
+- If average loss is 0, RSI should be 100
+- If average gain is 0 and average loss is 0, RSI should be 50
+- Return null for candles where RSI cannot yet be calculated
+- Include unit tests comparing known RSI examples
+
+Advanced RSI indicator functions:
+1. calculate_rsi(candles, period=14, source="close")
+2. calculate_rsi_ma(rsi_values, period=14, ma_type="sma|ema|wma")
+3. calculate_stoch_rsi(rsi_values, period=14, smooth_k=3, smooth_d=3)
+4. calculate_rsi_bollinger_bands(rsi_values, period=20, std_dev=2)
+5. detect_rsi_divergence(candles, rsi_values)
+6. calculate_multi_timeframe_rsi(symbol, intervals=["5m","15m","1h","4h"], period=14)
+
+Frontend UI requirements:
+Create a TradingView-like desktop layout:
+
+Top bar:
+- Symbol selector: BTC/USD, BTC/USDT, BTC/USDC, ETH/USD, ETH/USDT, ETH/USDC
+- Interval selector: 1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d
+- Connection status
+- Last price
+- 24h change if available
+- Theme toggle
+
+Main chart:
+- Candlestick chart using TradingView Lightweight Charts
+- Real-time updates using candlestickSeries.update(...)
+- Load historical candles first using /candles
+- Then subscribe to /ws/candles
+- Show crosshair
+- Show price scale
+- Show time scale
+- Auto-resize
+- Dark theme by default
+- No fake data in production
+
+RSI panel:
+- Separate lower chart pane
+- RSI line
+- 70 overbought line
+- 30 oversold line
+- Optional 50 midline
+- Toggle RSI overlays:
+  - RSI MA
+  - RSI EMA
+  - RSI Bollinger Bands
+  - Stochastic RSI
+  - Divergences
+  - Multi-timeframe RSI table
+
+Indicator sidebar:
+- Allow user to enable/disable indicators
+- Allow changing RSI period
+- Allow changing RSI source: close, open, high, low, hl2, hlc3, ohlc4
+- Allow changing overbought/oversold levels
+- Allow changing RSI moving average type and length
+
+State management:
+- Keep selected symbol, interval, theme, visible indicators, and RSI settings in persistent local storage.
+- Reconnect WebSocket automatically.
+- On symbol or interval change:
+  1. unsubscribe old stream
+  2. clear chart
+  3. fetch new historical candles
+  4. subscribe to new stream
+  5. recalculate indicators
+
+Backend architecture:
+Use this folder structure:
+
+backend/
+  app/
+    main.py
+    config.py
+    models/
+      candle.py
+      indicator.py
+    routes/
+      health.py
+      candles.py
+      indicators.py
+      websocket.py
+    services/
+      exchange_manager.py
+      candle_cache.py
+      indicator_service.py
+    exchanges/
+      base.py
+      binance.py
+      coinbase.py
+    indicators/
+      rsi.py
+      moving_averages.py
+      stoch_rsi.py
+      divergence.py
+    tests/
+      test_rsi.py
+      test_candles.py
+
+frontend/
+  src/
+    components/
+      layout/
+      chart/
+      indicators/
+      sidebar/
+      topbar/
+    hooks/
+      useCandles.ts
+      useWebSocket.ts
+      useIndicators.ts
+    stores/
+      chartStore.ts
+    services/
+      api.ts
+      websocket.ts
+    types/
+      candle.ts
+      indicator.ts
+    utils/
+      format.ts
+
+Important backend behavior:
+- Maintain one upstream exchange WebSocket per active symbol/interval where possible.
+- Fan out normalized candle updates to multiple frontend clients.
+- Avoid each frontend client opening its own exchange connection.
+- Reconnect upstream exchange sockets with exponential backoff.
+- Send heartbeat/ping messages to frontend clients.
+- Validate all incoming WebSocket messages with Pydantic.
+- Log connection events, subscription changes, upstream disconnects, and invalid messages.
+- Never crash the whole server because one exchange stream fails.
+
+Data normalization:
+All exchange candle data must be converted to:
+{
+  time: unix_seconds,
+  open: float,
+  high: float,
+  low: float,
+  close: float,
+  volume: float,
+  is_closed: boolean
+}
+
+Frontend chart behavior:
+- Use setData only for initial historical candles.
+- Use update for live candle updates.
+- Do not rerender the entire chart on every tick.
+- Keep chart rendering performant.
+- Debounce resize events.
+- Preserve visible time range when indicator settings change.
+
+Testing:
+Write tests for:
+- RSI calculation
+- RSI edge cases
+- zero-loss RSI
+- flat-market RSI
+- candle normalization
+- WebSocket subscription validation
+- unsupported symbol handling
+- indicator output length alignment with candles
+
+Deliverables:
+1. Complete backend code
+2. Complete frontend code
+3. README with setup instructions
+4. .env.example
+5. Dockerfile for backend
+6. Dockerfile for frontend
+7. docker-compose.yml
+8. Tests
+9. Clear explanation of how live candle streams work
+10. Clear explanation of RSI implementation
+
+Do not use placeholder data except in tests.
+Do not leave TODO comments.
+Do not include unrelated trading features.
+Focus on clean architecture, accurate candle data, accurate RSI, and a polished TradingView-style charting interface.
