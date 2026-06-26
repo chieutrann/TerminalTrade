@@ -73,7 +73,22 @@ async def get_rsi_advanced(
 
     manager = request.app.state.exchange_manager
     try:
-        candles = await manager.fetch_historical(symbol, interval, limit + period + 20, before)
+        overlay_periods = [period]
+        if include_sma:
+            overlay_periods.append(sma_period)
+        if include_ema:
+            overlay_periods.append(ema_period)
+        if include_wma:
+            overlay_periods.append(wma_period)
+        if include_stoch_rsi:
+            overlay_periods.append(14)
+        if include_bb:
+            overlay_periods.append(20)
+        if include_divergence:
+            overlay_periods.append(30)
+
+        warmup = period + max(overlay_periods) + 25
+        candles = await manager.fetch_historical(symbol, interval, limit + warmup, before)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 

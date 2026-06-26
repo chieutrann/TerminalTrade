@@ -55,7 +55,7 @@ class CoinbaseExchange(BaseExchange):
             return await self._fetch_native(product_id, target_seconds, limit, before)
         else:
             best_secs = max(s for s in COINBASE_GRANULARITY_MAP if s <= target_seconds) if any(s <= target_seconds for s in COINBASE_GRANULARITY_MAP) else 60
-            needed = min(int((limit * target_seconds) / best_secs) + 10, 300)
+            needed = int((limit * target_seconds) / best_secs) + 10
             base_candles = await self._fetch_native(product_id, best_secs, needed, before)
             aggregated = aggregate_candles(base_candles, target_seconds)
             return aggregated[-limit:]
@@ -69,45 +69,59 @@ class CoinbaseExchange(BaseExchange):
         Returns [[time, low, high, open, close, volume], ...] newest-first.
         Max 300 candles per request.
         """
-        effective_limit = min(limit, 300)
-        if before is not None:
-            end_time = before
-            start_time = end_time - (effective_limit * granularity_secs)
-        else:
-            end_time = int(time.time())
-            start_time = end_time - (effective_limit * granularity_secs)
-
-        start_iso = datetime.fromtimestamp(start_time, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        end_iso = datetime.fromtimestamp(end_time, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
         url = f"{COINBASE_REST_URL}/products/{product_id}/candles"
-        params = {
-            "granularity": str(granularity_secs),
-            "start": start_iso,
-            "end": end_iso,
-        }
+        end_time = before if before is not None else int(time.time())
+        remaining = max(limit, 1)
+        candles_by_time: dict[int, Candle] = {}
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+            while remaining > 0:
+                page_limit = min(remaining, 300)
+                start_time = end_time - (page_limit * granularity_secs)
 
-        candles = []
-        for row in data:
-            # row = [time, low, high, open, close, volume]
-            candles.append(
-                Candle(
-                    time=int(row[0]),
-                    open=float(row[3]),
-                    high=float(row[2]),
-                    low=float(row[1]),
-                    close=float(row[4]),
-                    volume=float(row[5]),
-                    is_closed=True,
-                )
-            )
-        candles.sort(key=lambda x: x.time)
-        return candles
+                start_iso = datetime.fromtimestamp(start_time, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                end_iso = datetime.fromtimestamp(end_time, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                params = {
+                    "granularity": str(granularity_secs),
+                    "start": start_iso,
+                    "end": end_iso,
+                }
+
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+
+                if not data:
+                    break
+
+                page_earliest = end_time
+                for row in data:
+                    candle_time = int(row[0])
+                    page_earliest = min(page_earliest, candle_time)
+                    # row = [time, low, high, open, close, volume]
+                    candles_by_time[candle_time] = Candle(
+                        time=candle_time,
+                        open=float(row[3]),
+                        high=float(row[2]),
+                        low=float(row[1]),
+                        close=float(row[4]),
+                        volume=float(row[5]),
+                        is_closed=True,
+                    )
+
+                fetched_new = len([ts for ts in candles_by_time if start_time <= ts < end_time])
+                if fetched_new == 0 or page_earliest >= end_time:
+                    break
+
+                remaining = limit - len(candles_by_time)
+                end_time = page_earliest
+
+                if remaining > 0:
+                    await asyncio.sleep(0.05)
+
+        candles = sorted(candles_by_time.values(), key=lambda x: x.time)
+        return candles[-limit:]
 
     async def subscribe_candles(
         self,

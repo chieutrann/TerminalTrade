@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   createChart,
+  BaselineSeries,
   CandlestickSeries,
   LineSeries,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
   type Time,
+  type BaselineData,
   type CandlestickData,
   type LineData,
   type WhitespaceData,
@@ -59,6 +61,50 @@ function makeLevelLineData(
   times: number[],
 ): Array<LineData<Time> | WhitespaceData<Time>> {
   return times.map((time) => ({ time: time as Time, value }));
+}
+
+function alignFieldDataToTimes<T extends { time: number }>(
+  points: T[] | undefined,
+  field: keyof T,
+  times: number[],
+): Array<LineData<Time> | WhitespaceData<Time>> {
+  const valuesByTime = new Map<number, number | null>();
+  points?.forEach((point) => {
+    const value = point[field];
+    valuesByTime.set(point.time, typeof value === 'number' ? value : null);
+  });
+
+  return times.map((time) => {
+    const value = valuesByTime.get(time);
+    if (value === null || value === undefined) {
+      return { time: time as Time } as WhitespaceData<Time>;
+    }
+
+    return { time: time as Time, value } as LineData<Time>;
+  });
+}
+
+function makeBandBaselineData(
+  value: number,
+  times: number[],
+): BaselineData<Time>[] {
+  return times.map((time) => ({ time: time as Time, value }));
+}
+
+function mergeByTime<T extends { time: number }>(
+  current: T[] | undefined,
+  incoming: T[] | undefined,
+  before?: number,
+): T[] | undefined {
+  if (!current && !incoming) return undefined;
+
+  const merged = new Map<number, T>();
+  current?.forEach((point) => merged.set(point.time, point));
+  incoming
+    ?.filter((point) => before === undefined || point.time < before)
+    .forEach((point) => merged.set(point.time, point));
+
+  return Array.from(merged.values()).sort((a, b) => a.time - b.time);
 }
 
 function latestValue(points: RsiLinePoint[] | undefined): number | null {
@@ -119,10 +165,16 @@ export default function ChartWidget() {
   const chartRef = useRef<IChartApi | null>(null);
   const rsiChartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const rsiBandSeriesRef = useRef<ISeriesApi<'Baseline'> | null>(null);
   const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const smaRsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const emaRsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const wmaRsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbUpperSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbMiddleSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const bbLowerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const stochKSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const stochDSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const obSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const osSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
 
@@ -139,6 +191,8 @@ export default function ChartWidget() {
   const isSyncingLogicalRangeRef = useRef(false);
   const lastRsiFetchEarliestRef = useRef<number | null>(null);
   const rsiHistoryFetchRef = useRef<AbortController | null>(null);
+  const pendingPrependCountRef = useRef(0);
+  const pendingVisibleLogicalRangeRef = useRef<LogicalRange | null>(null);
 
   const { data: candlesData, isLoading: isLoadingCandles, error: candlesError } = useGetCandles(
     { symbol, interval, limit: 500 },
@@ -220,13 +274,30 @@ export default function ChartWidget() {
         ...chartOptions.layout,
         background: { color: theme === 'dark' ? '#000000' : '#ffffff' },
       },
+      timeScale: {
+        ...chartOptions.timeScale,
+        visible: false,
+        borderVisible: false,
+      },
+      handleScroll: {
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+        mouseWheel: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: {
+          time: false,
+          price: true,
+        },
+        mouseWheel: false,
+        pinch: false,
+      },
     }),
     [chartOptions, theme]
   );
 
   const rsiValue = hoveredRsiValues?.rsi ?? latestValue(allRsiData.rsi);
-  const rsiBandTop = `${100 - Math.max(obLevel, osLevel)}%`;
-  const rsiBandHeight = `${Math.abs(obLevel - osLevel)}%`;
   const visibleMaLegends = [
     smaMa.show ? { label: `SMA ${smaMa.period} RSI`, color: smaMa.color, value: hoveredRsiValues?.sma ?? latestValue(allRsiData.sma_rsi) } : null,
     emaMa.show ? { label: `EMA ${emaMa.period} RSI`, color: emaMa.color, value: hoveredRsiValues?.ema ?? latestValue(allRsiData.ema_rsi) } : null,
@@ -319,6 +390,21 @@ export default function ChartWidget() {
 
     const chart = createChart(rsiContainerRef.current, rsiChartOptions);
 
+    const rsiBandSeries = chart.addSeries(BaselineSeries, {
+      baseValue: { type: 'price', price: Math.min(obLevel, osLevel) },
+      relativeGradient: false,
+      topFillColor1: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
+      topFillColor2: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
+      topLineColor: 'rgba(0, 0, 0, 0)',
+      bottomFillColor1: 'rgba(0, 0, 0, 0)',
+      bottomFillColor2: 'rgba(0, 0, 0, 0)',
+      bottomLineColor: 'rgba(0, 0, 0, 0)',
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      autoscaleInfoProvider: () => null,
+    });
+
     const rsiSeries = chart.addSeries(LineSeries, {
       color: '#a855f7',
       lineWidth: rsiLineWidth,
@@ -355,6 +441,54 @@ export default function ChartWidget() {
         })
       : null;
 
+    const bbUpperSeries = showRsiBb
+      ? chart.addSeries(LineSeries, {
+          color: '#f472b6',
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      : null;
+
+    const bbMiddleSeries = showRsiBb
+      ? chart.addSeries(LineSeries, {
+          color: '#f9a8d4',
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      : null;
+
+    const bbLowerSeries = showRsiBb
+      ? chart.addSeries(LineSeries, {
+          color: '#f472b6',
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      : null;
+
+    const stochKSeries = showStochRsi
+      ? chart.addSeries(LineSeries, {
+          color: '#eab308',
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      : null;
+
+    const stochDSeries = showStochRsi
+      ? chart.addSeries(LineSeries, {
+          color: '#14b8a6',
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        })
+      : null;
+
     const obSeries = chart.addSeries(LineSeries, {
       color: '#ef4444',
       lineWidth: 1,
@@ -372,10 +506,16 @@ export default function ChartWidget() {
     });
 
     rsiChartRef.current = chart;
+    rsiBandSeriesRef.current = rsiBandSeries;
     rsiSeriesRef.current = rsiSeries;
     smaRsiSeriesRef.current = smaRsiSeries;
     emaRsiSeriesRef.current = emaRsiSeries;
     wmaRsiSeriesRef.current = wmaRsiSeries;
+    bbUpperSeriesRef.current = bbUpperSeries;
+    bbMiddleSeriesRef.current = bbMiddleSeries;
+    bbLowerSeriesRef.current = bbLowerSeries;
+    stochKSeriesRef.current = stochKSeries;
+    stochDSeriesRef.current = stochDSeries;
     obSeriesRef.current = obSeries;
     osSeriesRef.current = osSeries;
     chart.priceScale('right').setVisibleRange({ from: 0, to: 100 });
@@ -384,14 +524,27 @@ export default function ChartWidget() {
 
     if (chartRef.current) {
       const mainTs = chartRef.current.timeScale();
+      const rsiTs = chart.timeScale();
       const onMainChange = (range: LogicalRange | null) => {
         if (isSyncingLogicalRangeRef.current) return;
         requestAnimationFrame(() => syncRsiLogicalRange(range));
       };
+      const onRsiChange = (range: LogicalRange | null) => {
+        if (!chartRef.current || isSyncingLogicalRangeRef.current) return;
+        if (!range || range.from == null || range.to == null) return;
+
+        isSyncingLogicalRangeRef.current = true;
+        chartRef.current.timeScale().setVisibleLogicalRange(range);
+        requestAnimationFrame(() => {
+          isSyncingLogicalRangeRef.current = false;
+        });
+      };
       mainTs.subscribeVisibleLogicalRangeChange(onMainChange);
+      rsiTs.subscribeVisibleLogicalRangeChange(onRsiChange);
       requestAnimationFrame(() => syncRsiLogicalRange());
       unsubMain = () => {
         try { mainTs.unsubscribeVisibleLogicalRangeChange(onMainChange); } catch { }
+        try { rsiTs.unsubscribeVisibleLogicalRangeChange(onRsiChange); } catch { }
       };
     }
 
@@ -428,14 +581,20 @@ export default function ChartWidget() {
       window.removeEventListener('resize', handleResize);
       chart.remove();
       rsiChartRef.current = null;
+      rsiBandSeriesRef.current = null;
       rsiSeriesRef.current = null;
       smaRsiSeriesRef.current = null;
       emaRsiSeriesRef.current = null;
       wmaRsiSeriesRef.current = null;
+      bbUpperSeriesRef.current = null;
+      bbMiddleSeriesRef.current = null;
+      bbLowerSeriesRef.current = null;
+      stochKSeriesRef.current = null;
+      stochDSeriesRef.current = null;
       obSeriesRef.current = null;
       osSeriesRef.current = null;
     };
-  }, [showRsi, rsiChartOptions, rsiLineWidth, smaMa.show, smaMa.color, smaMa.lineStyle, smaMa.lineWidth, smaMa.showValue, emaMa.show, emaMa.color, emaMa.lineStyle, emaMa.lineWidth, emaMa.showValue, wmaMa.show, wmaMa.color, wmaMa.lineStyle, wmaMa.lineWidth, wmaMa.showValue, syncRsiLogicalRange]);
+  }, [showRsi, rsiChartOptions, rsiLineWidth, smaMa.show, smaMa.color, smaMa.lineStyle, smaMa.lineWidth, smaMa.showValue, emaMa.show, emaMa.color, emaMa.lineStyle, emaMa.lineWidth, emaMa.showValue, wmaMa.show, wmaMa.color, wmaMa.lineStyle, wmaMa.lineWidth, wmaMa.showValue, showRsiBb, showStochRsi, syncRsiLogicalRange, obLevel, osLevel, theme]);
 
   useLayoutEffect(() => {
     if (!rsiContainerRef.current || !rsiChartRef.current) return;
@@ -470,7 +629,23 @@ export default function ChartWidget() {
         }))
         .sort((a, b) => (a.time as number) - (b.time as number));
       candlestickSeriesRef.current.setData(formattedData);
-      if (chartRef.current && formattedData.length && !initialRangeSetRef.current) {
+      if (chartRef.current && pendingPrependCountRef.current > 0) {
+        const prependCount = pendingPrependCountRef.current;
+        const previousRange = pendingVisibleLogicalRangeRef.current;
+        pendingPrependCountRef.current = 0;
+        pendingVisibleLogicalRangeRef.current = null;
+
+        if (previousRange && previousRange.from != null && previousRange.to != null) {
+          chartRef.current.timeScale().setVisibleLogicalRange({
+            from: previousRange.from + prependCount,
+            to: previousRange.to + prependCount,
+          });
+          requestAnimationFrame(() => {
+            syncRsiLogicalRange();
+            requestAnimationFrame(() => syncRsiLogicalRange());
+          });
+        }
+      } else if (chartRef.current && formattedData.length && !initialRangeSetRef.current) {
         initialRangeSetRef.current = true;
         const visibleCandles = 100;
         const lastIndex = formattedData.length - 1;
@@ -478,7 +653,10 @@ export default function ChartWidget() {
           from: Math.max(0, lastIndex - visibleCandles),
           to: lastIndex + 12,
         });
-        requestAnimationFrame(() => syncRsiLogicalRange());
+        requestAnimationFrame(() => {
+          syncRsiLogicalRange();
+          requestAnimationFrame(() => syncRsiLogicalRange());
+        });
       }
     }
   }, [allCandles, interval, syncRsiLogicalRange]);
@@ -533,7 +711,15 @@ export default function ChartWidget() {
         const newCandles = candlesResp.candles.filter((c) => c.time < earliest);
         if (newCandles.length > 0) {
           setAllCandles((prev) => {
-            const merged = [...prev, ...newCandles];
+            const existingTimes = new Set(prev.map((candle) => candle.time));
+            const uniqueNewCandles = newCandles.filter((candle) => !existingTimes.has(candle.time));
+
+            if (uniqueNewCandles.length > 0) {
+              pendingPrependCountRef.current += uniqueNewCandles.length;
+              pendingVisibleLogicalRangeRef.current = chartRef.current?.timeScale().getVisibleLogicalRange() ?? null;
+            }
+
+            const merged = [...prev, ...uniqueNewCandles];
             const deduped = new Map<number, Candle>();
             merged.forEach((c) => deduped.set(c.time, c));
             return Array.from(deduped.values()).sort((a, b) => a.time - b.time);
@@ -546,29 +732,15 @@ export default function ChartWidget() {
         const newRsi = rsiResp.rsi.filter((r) => r.time !== null && (r.time as number) < earliest);
         if (newRsi.length > 0) {
           setAllRsiData((prev) => {
-            const dedup = (arr: Array<{ time: number; value?: number | null }>) => {
-              const map = new Map<number, { time: number; value: number | null }>();
-              arr.forEach((r) => map.set(r.time, { time: r.time, value: r.value ?? null }));
-              return Array.from(map.values()).sort((a, b) => a.time - b.time);
-            };
-            const mergedRsi = [...(prev.rsi ?? []), ...newRsi];
-            const mergedSma = prev.sma_rsi && rsiResp.sma_rsi
-              ? [...prev.sma_rsi, ...rsiResp.sma_rsi].filter((r) => r.time !== null && (r.time as number) < earliest)
-              : prev.sma_rsi;
-            const mergedEma = prev.ema_rsi && rsiResp.ema_rsi
-              ? [...prev.ema_rsi, ...rsiResp.ema_rsi].filter((r) => r.time !== null && (r.time as number) < earliest)
-              : prev.ema_rsi;
-            const mergedWma = prev.wma_rsi && rsiResp.wma_rsi
-              ? [...prev.wma_rsi, ...rsiResp.wma_rsi].filter((r) => r.time !== null && (r.time as number) < earliest)
-              : prev.wma_rsi;
             return {
-              rsi: dedup(mergedRsi),
-              sma_rsi: mergedSma ? dedup(mergedSma) : undefined,
-              ema_rsi: mergedEma ? dedup(mergedEma) : undefined,
-              wma_rsi: mergedWma ? dedup(mergedWma) : undefined,
-              bollinger_bands: prev.bollinger_bands,
-              stoch_rsi: prev.stoch_rsi,
-              divergences: prev.divergences,
+              ...prev,
+              rsi: mergeByTime(prev.rsi, rsiResp.rsi, earliest) ?? [],
+              sma_rsi: mergeByTime(prev.sma_rsi, rsiResp.sma_rsi, earliest),
+              ema_rsi: mergeByTime(prev.ema_rsi, rsiResp.ema_rsi, earliest),
+              wma_rsi: mergeByTime(prev.wma_rsi, rsiResp.wma_rsi, earliest),
+              bollinger_bands: mergeByTime(prev.bollinger_bands, rsiResp.bollinger_bands, earliest),
+              stoch_rsi: mergeByTime(prev.stoch_rsi, rsiResp.stoch_rsi, earliest),
+              divergences: mergeByTime(prev.divergences, rsiResp.divergences, earliest),
             };
           });
         }
@@ -613,7 +785,22 @@ export default function ChartWidget() {
         .map((candle) => candle.time)
         .sort((a, b) => a - b);
 
-      rsiChartRef.current?.priceScale('right').setVisibleRange({ from: 0, to: 100 });
+      if (rsiBandSeriesRef.current) {
+        const upperLevel = Math.max(obLevel, osLevel);
+        const lowerLevel = Math.min(obLevel, osLevel);
+        rsiBandSeriesRef.current.applyOptions({
+          baseValue: { type: 'price', price: lowerLevel },
+          relativeGradient: false,
+          topFillColor1: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
+          topFillColor2: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
+          topLineColor: 'rgba(0, 0, 0, 0)',
+          bottomFillColor1: 'rgba(0, 0, 0, 0)',
+          bottomFillColor2: 'rgba(0, 0, 0, 0)',
+          bottomLineColor: 'rgba(0, 0, 0, 0)',
+          autoscaleInfoProvider: () => null,
+        });
+        rsiBandSeriesRef.current.setData(makeBandBaselineData(upperLevel, candleTimes));
+      }
 
       rsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.rsi, candleTimes));
       if (smaRsiSeriesRef.current && allRsiData.sma_rsi) {
@@ -625,15 +812,33 @@ export default function ChartWidget() {
       if (wmaRsiSeriesRef.current && allRsiData.wma_rsi) {
         wmaRsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.wma_rsi, candleTimes));
       }
+      if (bbUpperSeriesRef.current && allRsiData.bollinger_bands) {
+        bbUpperSeriesRef.current.setData(alignFieldDataToTimes(allRsiData.bollinger_bands, 'upper', candleTimes));
+      }
+      if (bbMiddleSeriesRef.current && allRsiData.bollinger_bands) {
+        bbMiddleSeriesRef.current.setData(alignFieldDataToTimes(allRsiData.bollinger_bands, 'middle', candleTimes));
+      }
+      if (bbLowerSeriesRef.current && allRsiData.bollinger_bands) {
+        bbLowerSeriesRef.current.setData(alignFieldDataToTimes(allRsiData.bollinger_bands, 'lower', candleTimes));
+      }
+      if (stochKSeriesRef.current && allRsiData.stoch_rsi) {
+        stochKSeriesRef.current.setData(alignFieldDataToTimes(allRsiData.stoch_rsi, 'k', candleTimes));
+      }
+      if (stochDSeriesRef.current && allRsiData.stoch_rsi) {
+        stochDSeriesRef.current.setData(alignFieldDataToTimes(allRsiData.stoch_rsi, 'd', candleTimes));
+      }
       if (obSeriesRef.current) {
         obSeriesRef.current.setData(makeLevelLineData(obLevel, candleTimes));
       }
       if (osSeriesRef.current) {
         osSeriesRef.current.setData(makeLevelLineData(osLevel, candleTimes));
       }
-      requestAnimationFrame(() => syncRsiLogicalRange());
+      requestAnimationFrame(() => {
+        syncRsiLogicalRange();
+        requestAnimationFrame(() => syncRsiLogicalRange());
+      });
     }
-  }, [showRsi, allRsiData, allCandles, obLevel, osLevel, syncRsiLogicalRange]);
+  }, [showRsi, allRsiData, allCandles, obLevel, osLevel, syncRsiLogicalRange, theme]);
 
   useEffect(() => {
     if (showRsi) return;
@@ -683,11 +888,6 @@ export default function ChartWidget() {
         >
           <div ref={rsiContainerRef} className="absolute inset-0" data-testid="rsi-chart" />
           <div
-            aria-hidden="true"
-            className="pointer-events-none absolute left-0 right-[70px] z-10 bg-pink-400/10"
-            style={{ top: rsiBandTop, height: rsiBandHeight }}
-          />
-          <div
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
@@ -702,7 +902,7 @@ export default function ChartWidget() {
                 });
               }
             }}
-            className="absolute left-0 right-0 top-0 z-20 flex h-5 cursor-ns-resize touch-none select-none items-center justify-center border-t border-border/70 bg-background/30 text-muted-foreground backdrop-blur-sm"
+            className="absolute left-0 right-0 top-0 z-50 flex h-8 cursor-ns-resize touch-none select-none items-start justify-center border-t border-border/70 bg-background/20 pt-1 text-muted-foreground backdrop-blur-sm"
           >
             <GripHorizontal className="h-4 w-4" />
           </div>

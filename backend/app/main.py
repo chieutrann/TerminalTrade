@@ -49,6 +49,7 @@ app.include_router(health_router, prefix=PREFIX)
 app.include_router(candles_router, prefix=PREFIX)
 app.include_router(indicators_router, prefix=PREFIX)
 app.include_router(ws_router, prefix=PREFIX)
+app.include_router(ws_router)
 
 
 @app.get("/")
