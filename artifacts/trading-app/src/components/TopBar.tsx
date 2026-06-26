@@ -1,10 +1,61 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTradingStore } from '../store/useTradingStore';
 import { useGetSymbols, getGetSymbolsQueryKey } from '@workspace/api-client-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Moon, Sun } from 'lucide-react';
 import { useWebsocket } from '../hooks/useWebsocket';
+
+const TIME_ZONE_OPTIONS = [
+  { label: 'UTC', value: 'UTC' },
+  { label: 'Local', value: 'local' },
+  { label: 'New York', value: 'America/New_York' },
+  { label: 'London', value: 'Europe/London' },
+  { label: 'Berlin / Vienna', value: 'Europe/Vienna' },
+  { label: 'Tokyo', value: 'Asia/Tokyo' },
+  { label: 'Shanghai', value: 'Asia/Shanghai' },
+  { label: 'Singapore', value: 'Asia/Singapore' },
+  { label: 'Sydney', value: 'Australia/Sydney' },
+];
+
+function resolveChartTimeZone(timeZone: string): string {
+  if (timeZone === 'local') {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  }
+
+  return timeZone;
+}
+
+function getTimeZoneAbbreviation(timeZone: string): string {
+  const resolvedTimeZone = resolveChartTimeZone(timeZone);
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: resolvedTimeZone,
+      timeZoneName: 'short',
+    }).formatToParts(new Date());
+
+    return parts.find((part) => part.type === 'timeZoneName')?.value ?? resolvedTimeZone;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function formatClockForTimeZone(date: Date, timeZone: string): string {
+  const resolvedTimeZone = resolveChartTimeZone(timeZone);
+
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: resolvedTimeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(11, 19);
+  }
+}
 
 export default function TopBar() {
   const {
@@ -13,6 +64,8 @@ export default function TopBar() {
     interval,
     setInterval,
     favoriteIntervals,
+    chartTimeZone,
+    setChartTimeZone,
     theme,
     setTheme,
   } = useTradingStore();
@@ -23,6 +76,18 @@ export default function TopBar() {
   const symbols = Array.isArray(symbolsData?.symbols) ? symbolsData.symbols : [symbol];
 
   const { status, lastCandle } = useWebsocket(symbol, interval);
+  const [currentClockTime, setCurrentClockTime] = useState(() => new Date());
+  const chartTimeZoneLabel = useMemo(() => getTimeZoneAbbreviation(chartTimeZone), [chartTimeZone]);
+  const bottomClockLabel = useMemo(
+    () => `${formatClockForTimeZone(currentClockTime, chartTimeZone)} ${chartTimeZoneLabel}`,
+    [chartTimeZone, chartTimeZoneLabel, currentClockTime],
+  );
+
+  useEffect(() => {
+    const timerId = window.setInterval(() => setCurrentClockTime(new Date()), 1000);
+    return () => window.clearInterval(timerId);
+  }, []);
+
   const change = lastCandle ? lastCandle.close - lastCandle.open : null;
   const changePercent = lastCandle && lastCandle.open !== 0 ? (change! / lastCandle.open) * 100 : null;
   const isUp = (change ?? 0) >= 0;
@@ -62,6 +127,28 @@ export default function TopBar() {
                 </Button>
               );
             })}
+
+            <div className="ml-2 flex h-8 items-center overflow-hidden rounded-md border border-border bg-secondary/50 font-mono text-xs">
+              <Select value={chartTimeZone} onValueChange={setChartTimeZone}>
+                <SelectTrigger
+                  className="h-8 w-[86px] border-0 bg-transparent px-2 font-mono text-xs shadow-none focus:ring-0"
+                  data-testid="select-chart-timezone"
+                  title={`Chart timezone: ${resolveChartTimeZone(chartTimeZone)}`}
+                >
+                  <SelectValue placeholder="UTC" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIME_ZONE_OPTIONS.map((timeZone) => (
+                    <SelectItem key={timeZone.value} value={timeZone.value} className="font-mono">
+                      {timeZone.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="hidden h-full min-w-[112px] items-center justify-center border-l border-border px-2 font-semibold tabular-nums text-foreground sm:flex">
+                {bottomClockLabel}
+              </div>
+            </div>
           </div>
         </div>
 

@@ -23,6 +23,7 @@ export type ChartProfileData = {
   symbol: string;
   interval: string;
   theme: 'light' | 'dark';
+  chartTimeZone: string;
   rsiPeriod: number;
   rsiSource: string;
   rsiLineWidth: 1 | 2 | 3 | 4;
@@ -51,6 +52,7 @@ type StoreState = {
   symbol: string;
   interval: string;
   theme: 'light' | 'dark';
+  chartTimeZone: string;
   rsiPeriod: number;
   rsiSource: string;
   rsiLineWidth: 1 | 2 | 3 | 4;
@@ -71,6 +73,7 @@ type StoreState = {
   setSymbol: (s: string) => void;
   setInterval: (i: string) => void;
   setTheme: (t: 'light' | 'dark') => void;
+  setChartTimeZone: (timeZone: string) => void;
   setRsiPeriod: (p: number) => void;
   setRsiSource: (s: string) => void;
   setRsiLineWidth: (w: 1 | 2 | 3 | 4) => void;
@@ -95,6 +98,7 @@ function createProfileData(state: StoreState): ChartProfileData {
     symbol: state.symbol,
     interval: state.interval,
     theme: state.theme,
+    chartTimeZone: state.chartTimeZone,
     rsiPeriod: state.rsiPeriod,
     rsiSource: state.rsiSource,
     rsiLineWidth: state.rsiLineWidth,
@@ -118,6 +122,7 @@ export const useTradingStore = create<StoreState>()(
       symbol: 'BTC/USD',
       interval: '1m',
       theme: 'dark',
+      chartTimeZone: 'UTC',
       rsiPeriod: 14,
       rsiSource: 'close',
       rsiLineWidth: 2,
@@ -138,6 +143,7 @@ export const useTradingStore = create<StoreState>()(
       setSymbol: (symbol) => set({ symbol }),
       setInterval: (interval) => set({ interval }),
       setTheme: (theme) => set({ theme }),
+      setChartTimeZone: (chartTimeZone) => set({ chartTimeZone }),
       setRsiPeriod: (rsiPeriod) => set({ rsiPeriod }),
       setRsiSource: (rsiSource) => set({ rsiSource }),
       setRsiLineWidth: (rsiLineWidth) => set({ rsiLineWidth }),
@@ -190,6 +196,7 @@ export const useTradingStore = create<StoreState>()(
           smaMa: { ...profile.data.smaMa },
           emaMa: { ...profile.data.emaMa },
           wmaMa: { ...profile.data.wmaMa },
+          chartTimeZone: profile.data.chartTimeZone ?? state.chartTimeZone ?? 'UTC',
           favoriteIntervals: [...profile.data.favoriteIntervals],
           activeProfileId: id,
         };

@@ -46,6 +46,99 @@ function parseIntervalSeconds(interval: string): number {
   return value * (multipliers[unit] || 60);
 }
 
+function resolveChartTimeZone(timeZone: string): string {
+  if (timeZone === "local") {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  }
+
+  return timeZone;
+}
+
+function getTimeZoneAbbreviation(timeZone: string): string {
+  const resolvedTimeZone = resolveChartTimeZone(timeZone);
+
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: resolvedTimeZone,
+      timeZoneName: "short",
+    }).formatToParts(new Date());
+
+    return (
+      parts.find((part) => part.type === "timeZoneName")?.value ??
+      resolvedTimeZone
+    );
+  } catch {
+    return "UTC";
+  }
+}
+
+function formatChartTime(
+  time: Time,
+  timeZone: string,
+  options?: { includeDate?: boolean; includeSeconds?: boolean },
+): string {
+  const timestamp = typeof time === "number" ? time : Number.NaN;
+
+  if (!Number.isFinite(timestamp)) return "";
+
+  const resolvedTimeZone = resolveChartTimeZone(timeZone);
+  const date = new Date(timestamp * 1000);
+
+  try {
+    if (options?.includeDate) {
+      const formatter = new Intl.DateTimeFormat("en-GB", {
+        timeZone: resolvedTimeZone,
+        day: "2-digit",
+        month: "short",
+        year: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: options?.includeSeconds ? "2-digit" : undefined,
+        hour12: false,
+      });
+
+      return formatter.format(date).replace(",", "");
+    }
+
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: resolvedTimeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: options?.includeSeconds ? "2-digit" : undefined,
+      hour12: false,
+    });
+
+    return formatter.format(date);
+  } catch {
+    return new Date(timestamp * 1000).toISOString();
+  }
+}
+
+function formatChartDate(time: Time, timeZone: string): string {
+  const timestamp = typeof time === "number" ? time : Number.NaN;
+
+  if (!Number.isFinite(timestamp)) return "";
+
+  const resolvedTimeZone = resolveChartTimeZone(timeZone);
+  const date = new Date(timestamp * 1000);
+
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: resolvedTimeZone,
+      day: "2-digit",
+      month: "short",
+      year: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+      .format(date)
+      .replace(",", "");
+  } catch {
+    return new Date(timestamp * 1000).toISOString();
+  }
+}
+
 type RsiLinePoint = { time: number; value?: number | null };
 
 function alignLineDataToTimes(
@@ -161,6 +254,7 @@ export default function ChartWidget() {
     wmaMa,
     obLevel,
     osLevel,
+    chartTimeZone,
   } = useTradingStore();
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -271,6 +365,11 @@ export default function ChartWidget() {
 
   const { lastCandle } = useWebsocket(symbol, interval);
 
+  const chartTimeZoneLabel = useMemo(
+    () => getTimeZoneAbbreviation(chartTimeZone),
+    [chartTimeZone],
+  );
+
   const chartOptions = useMemo(
     () => ({
       autoSize: true,
@@ -293,12 +392,17 @@ export default function ChartWidget() {
         barSpacing: 8,
         rightOffset: 12,
         borderVisible: true,
+        tickMarkFormatter: (time: Time) => formatChartTime(time, chartTimeZone),
+      },
+      localization: {
+        timeFormatter: (time: Time) =>
+          `${formatChartDate(time, chartTimeZone)} ${chartTimeZoneLabel}`,
       },
       rightPriceScale: { minimumWidth: 70 },
       handleScroll: true,
       handleScale: true,
     }),
-    [theme],
+    [theme, chartTimeZone, chartTimeZoneLabel],
   );
 
   const rsiChartOptions = useMemo(
