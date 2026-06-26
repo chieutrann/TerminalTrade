@@ -9,6 +9,7 @@ import {
   type CandlestickData,
   type LineData,
   type WhitespaceData,
+  type LogicalRange,
 } from 'lightweight-charts';
 import { useTradingStore } from '../store/useTradingStore';
 import {
@@ -28,6 +29,34 @@ function parseIntervalSeconds(interval: string): number {
   const unit = interval.slice(-1);
   const multipliers: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400 };
   return value * (multipliers[unit] || 60);
+}
+
+type RsiLinePoint = { time: number; value?: number | null };
+
+function alignLineDataToTimes(
+  points: RsiLinePoint[] | undefined,
+  times: number[],
+): Array<LineData<Time> | WhitespaceData<Time>> {
+  const valuesByTime = new Map<number, number | null>();
+  points?.forEach((point) => {
+    valuesByTime.set(point.time, point.value ?? null);
+  });
+
+  return times.map((time) => {
+    const value = valuesByTime.get(time);
+    if (value === null || value === undefined) {
+      return { time: time as Time } as WhitespaceData<Time>;
+    }
+
+    return { time: time as Time, value } as LineData<Time>;
+  });
+}
+
+function makeLevelLineData(
+  value: number,
+  times: number[],
+): Array<LineData<Time> | WhitespaceData<Time>> {
+  return times.map((time) => ({ time: time as Time, value }));
 }
 
 export default function ChartWidget() {
@@ -130,26 +159,30 @@ export default function ChartWidget() {
         horzLines: { color: theme === 'dark' ? '#1e293b' : '#f1f5f9' },
       },
       crosshair: { mode: 1 },
-      timeScale: { timeVisible: true, secondsVisible: false },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        barSpacing: 8,
+        rightOffset: 12,
+        borderVisible: true,
+      },
+      rightPriceScale: { minimumWidth: 70 },
       handleScroll: true,
       handleScale: true,
     }),
     [theme]
   );
 
-  const syncRsiTimeRange = useCallback(() => {
-    setTimeout(() => {
-      if (chartRef.current && rsiChartRef.current) {
-        const mainTs = chartRef.current.timeScale();
-        const rsiTs = rsiChartRef.current.timeScale();
-        try {
-          const range = mainTs.getVisibleRange();
-          if (range && range.from != null && range.to != null) {
-            rsiTs.setVisibleRange(range);
-          }
-        } catch { }
-      }
-    }, 150);
+  const syncRsiLogicalRange = useCallback((range?: LogicalRange | null) => {
+    if (!chartRef.current || !rsiChartRef.current) return;
+
+    const mainTs = chartRef.current.timeScale();
+    const rsiTs = rsiChartRef.current.timeScale();
+    const nextRange = range ?? mainTs.getVisibleLogicalRange();
+
+    if (nextRange && nextRange.from != null && nextRange.to != null) {
+      rsiTs.setVisibleLogicalRange(nextRange);
+    }
   }, []);
 
   useEffect(() => {
@@ -241,18 +274,20 @@ export default function ChartWidget() {
     smaRsiSeriesRef.current = smaRsiSeries;
     emaRsiSeriesRef.current = emaRsiSeries;
     wmaRsiSeriesRef.current = wmaRsiSeries;
+    obSeriesRef.current = obSeries;
+    osSeriesRef.current = osSeries;
 
     let unsubMain: (() => void) | null = null;
 
     if (chartRef.current) {
       const mainTs = chartRef.current.timeScale();
-      const onMainChange = () => {
-        requestAnimationFrame(syncRsiTimeRange);
+      const onMainChange = (range: LogicalRange | null) => {
+        requestAnimationFrame(() => syncRsiLogicalRange(range));
       };
-      mainTs.subscribeVisibleTimeRangeChange(onMainChange);
-      requestAnimationFrame(syncRsiTimeRange);
+      mainTs.subscribeVisibleLogicalRangeChange(onMainChange);
+      requestAnimationFrame(() => syncRsiLogicalRange());
       unsubMain = () => {
-        try { mainTs.unsubscribeVisibleTimeRangeChange(onMainChange); } catch { }
+        try { mainTs.unsubscribeVisibleLogicalRangeChange(onMainChange); } catch { }
       };
     }
 
@@ -262,6 +297,7 @@ export default function ChartWidget() {
           height: rsiContainerRef.current.clientHeight,
           width: rsiContainerRef.current.clientWidth,
         });
+        requestAnimationFrame(() => syncRsiLogicalRange());
       }
     };
 
@@ -276,8 +312,10 @@ export default function ChartWidget() {
       smaRsiSeriesRef.current = null;
       emaRsiSeriesRef.current = null;
       wmaRsiSeriesRef.current = null;
+      obSeriesRef.current = null;
+      osSeriesRef.current = null;
     };
-  }, [showRsi, chartOptions, obLevel, osLevel, smaMa.show, smaMa.color, smaMa.lineStyle, smaMa.lineWidth, smaMa.showValue, emaMa.show, emaMa.color, emaMa.lineStyle, emaMa.lineWidth, emaMa.showValue, wmaMa.show, wmaMa.color, wmaMa.lineStyle, wmaMa.lineWidth, wmaMa.showValue]);
+  }, [showRsi, chartOptions, obLevel, osLevel, smaMa.show, smaMa.color, smaMa.lineStyle, smaMa.lineWidth, smaMa.showValue, emaMa.show, emaMa.color, emaMa.lineStyle, emaMa.lineWidth, emaMa.showValue, wmaMa.show, wmaMa.color, wmaMa.lineStyle, wmaMa.lineWidth, wmaMa.showValue, syncRsiLogicalRange]);
 
   // Seed allCandles and allRsiData from initial data; reset pagination on symbol/interval change
   useEffect(() => {
@@ -309,17 +347,16 @@ export default function ChartWidget() {
       candlestickSeriesRef.current.setData(formattedData);
       if (chartRef.current && formattedData.length && !initialRangeSetRef.current) {
         initialRangeSetRef.current = true;
-        const lastTime = formattedData[formattedData.length - 1].time as number;
-        const intervalSeconds = parseIntervalSeconds(interval);
         const visibleCandles = 100;
-        const startTime = lastTime - (visibleCandles * intervalSeconds);
-        chartRef.current.timeScale().setVisibleRange({
-          from: startTime as Time,
-          to: lastTime as Time,
+        const lastIndex = formattedData.length - 1;
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, lastIndex - visibleCandles),
+          to: lastIndex + 12,
         });
+        requestAnimationFrame(() => syncRsiLogicalRange());
       }
     }
-  }, [allCandles, interval]);
+  }, [allCandles, interval, syncRsiLogicalRange]);
 
   // Lazy-load older candles and RSI when user scrolls to the left edge
   const loadOlderCandles = useCallback(async () => {
@@ -447,28 +484,29 @@ export default function ChartWidget() {
 
   useEffect(() => {
     if (showRsi && rsiSeriesRef.current && allRsiData.rsi) {
-      const toLineData = (arr: Array<{ time: number; value?: number | null }>) =>
-        arr
-          .map((r) => {
-            if (r.value === null || r.value === undefined) {
-              return { time: r.time as Time } as WhitespaceData<Time>;
-            }
-            return { time: r.time as Time, value: r.value as number } as LineData<Time>;
-          })
-          .sort((a, b) => (a.time as number) - (b.time as number));
-      rsiSeriesRef.current.setData(toLineData(allRsiData.rsi));
+      const candleTimes = allCandles
+        .map((candle) => candle.time)
+        .sort((a, b) => a - b);
+
+      rsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.rsi, candleTimes));
       if (smaRsiSeriesRef.current && allRsiData.sma_rsi) {
-        smaRsiSeriesRef.current.setData(toLineData(allRsiData.sma_rsi));
+        smaRsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.sma_rsi, candleTimes));
       }
       if (emaRsiSeriesRef.current && allRsiData.ema_rsi) {
-        emaRsiSeriesRef.current.setData(toLineData(allRsiData.ema_rsi));
+        emaRsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.ema_rsi, candleTimes));
       }
       if (wmaRsiSeriesRef.current && allRsiData.wma_rsi) {
-        wmaRsiSeriesRef.current.setData(toLineData(allRsiData.wma_rsi));
+        wmaRsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.wma_rsi, candleTimes));
       }
-      requestAnimationFrame(syncRsiTimeRange);
+      if (obSeriesRef.current) {
+        obSeriesRef.current.setData(makeLevelLineData(obLevel, candleTimes));
+      }
+      if (osSeriesRef.current) {
+        osSeriesRef.current.setData(makeLevelLineData(osLevel, candleTimes));
+      }
+      requestAnimationFrame(() => syncRsiLogicalRange());
     }
-  }, [showRsi, allRsiData, syncRsiTimeRange]);
+  }, [showRsi, allRsiData, allCandles, obLevel, osLevel, syncRsiLogicalRange]);
 
   useEffect(() => {
     if (lastCandle && candlestickSeriesRef.current) {
