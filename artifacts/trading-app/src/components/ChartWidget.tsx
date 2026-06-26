@@ -1,14 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState, useCallback, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   createChart,
-  BaselineSeries,
   CandlestickSeries,
   LineSeries,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
   type Time,
-  type BaselineData,
   type CandlestickData,
   type LineData,
   type WhitespaceData,
@@ -60,13 +58,6 @@ function makeLevelLineData(
   value: number,
   times: number[],
 ): Array<LineData<Time> | WhitespaceData<Time>> {
-  return times.map((time) => ({ time: time as Time, value }));
-}
-
-function makeBandBaselineData(
-  value: number,
-  times: number[],
-): BaselineData<Time>[] {
   return times.map((time) => ({ time: time as Time, value }));
 }
 
@@ -128,7 +119,6 @@ export default function ChartWidget() {
   const chartRef = useRef<IChartApi | null>(null);
   const rsiChartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const rsiBandSeriesRef = useRef<ISeriesApi<'Baseline'> | null>(null);
   const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const smaRsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const emaRsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
@@ -201,12 +191,12 @@ export default function ChartWidget() {
     () => ({
       autoSize: true,
       layout: {
-        background: { color: theme === 'dark' ? '#0f172a' : '#ffffff' },
-        textColor: theme === 'dark' ? '#94a3b8' : '#64748b',
+        background: { color: theme === 'dark' ? '#000000' : '#ffffff' },
+        textColor: theme === 'dark' ? '#a78bfa' : '#64748b',
       },
       grid: {
-        vertLines: { color: theme === 'dark' ? '#1e293b' : '#f1f5f9' },
-        horzLines: { color: theme === 'dark' ? '#1e293b' : '#f1f5f9' },
+        vertLines: { color: theme === 'dark' ? 'rgba(139,92,246,0.14)' : '#f1f5f9' },
+        horzLines: { color: theme === 'dark' ? 'rgba(139,92,246,0.14)' : '#f1f5f9' },
       },
       crosshair: { mode: 1 },
       timeScale: {
@@ -228,13 +218,15 @@ export default function ChartWidget() {
       ...chartOptions,
       layout: {
         ...chartOptions.layout,
-        background: { color: theme === 'dark' ? '#0f172a' : '#ffffff' },
+        background: { color: theme === 'dark' ? '#000000' : '#ffffff' },
       },
     }),
     [chartOptions, theme]
   );
 
   const rsiValue = hoveredRsiValues?.rsi ?? latestValue(allRsiData.rsi);
+  const rsiBandTop = `${100 - Math.max(obLevel, osLevel)}%`;
+  const rsiBandHeight = `${Math.abs(obLevel - osLevel)}%`;
   const visibleMaLegends = [
     smaMa.show ? { label: `SMA ${smaMa.period} RSI`, color: smaMa.color, value: hoveredRsiValues?.sma ?? latestValue(allRsiData.sma_rsi) } : null,
     emaMa.show ? { label: `EMA ${emaMa.period} RSI`, color: emaMa.color, value: hoveredRsiValues?.ema ?? latestValue(allRsiData.ema_rsi) } : null,
@@ -327,22 +319,8 @@ export default function ChartWidget() {
 
     const chart = createChart(rsiContainerRef.current, rsiChartOptions);
 
-    const rsiBandSeries = chart.addSeries(BaselineSeries, {
-      baseValue: { type: 'price', price: Math.min(obLevel, osLevel) },
-      relativeGradient: false,
-      topFillColor1: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
-      topFillColor2: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
-      topLineColor: 'rgba(0, 0, 0, 0)',
-      bottomFillColor1: 'rgba(0, 0, 0, 0)',
-      bottomFillColor2: 'rgba(0, 0, 0, 0)',
-      bottomLineColor: 'rgba(0, 0, 0, 0)',
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-
     const rsiSeries = chart.addSeries(LineSeries, {
-      color: '#8b5cf6',
+      color: '#a855f7',
       lineWidth: rsiLineWidth,
       priceLineVisible: false,
     });
@@ -394,13 +372,13 @@ export default function ChartWidget() {
     });
 
     rsiChartRef.current = chart;
-    rsiBandSeriesRef.current = rsiBandSeries;
     rsiSeriesRef.current = rsiSeries;
     smaRsiSeriesRef.current = smaRsiSeries;
     emaRsiSeriesRef.current = emaRsiSeries;
     wmaRsiSeriesRef.current = wmaRsiSeries;
     obSeriesRef.current = obSeries;
     osSeriesRef.current = osSeries;
+    chart.priceScale('right').setVisibleRange({ from: 0, to: 100 });
 
     let unsubMain: (() => void) | null = null;
 
@@ -450,7 +428,6 @@ export default function ChartWidget() {
       window.removeEventListener('resize', handleResize);
       chart.remove();
       rsiChartRef.current = null;
-      rsiBandSeriesRef.current = null;
       rsiSeriesRef.current = null;
       smaRsiSeriesRef.current = null;
       emaRsiSeriesRef.current = null;
@@ -458,7 +435,7 @@ export default function ChartWidget() {
       obSeriesRef.current = null;
       osSeriesRef.current = null;
     };
-  }, [showRsi, rsiChartOptions, rsiLineWidth, smaMa.show, smaMa.color, smaMa.lineStyle, smaMa.lineWidth, smaMa.showValue, emaMa.show, emaMa.color, emaMa.lineStyle, emaMa.lineWidth, emaMa.showValue, wmaMa.show, wmaMa.color, wmaMa.lineStyle, wmaMa.lineWidth, wmaMa.showValue, syncRsiLogicalRange, obLevel, osLevel, theme]);
+  }, [showRsi, rsiChartOptions, rsiLineWidth, smaMa.show, smaMa.color, smaMa.lineStyle, smaMa.lineWidth, smaMa.showValue, emaMa.show, emaMa.color, emaMa.lineStyle, emaMa.lineWidth, emaMa.showValue, wmaMa.show, wmaMa.color, wmaMa.lineStyle, wmaMa.lineWidth, wmaMa.showValue, syncRsiLogicalRange]);
 
   useLayoutEffect(() => {
     if (!rsiContainerRef.current || !rsiChartRef.current) return;
@@ -636,21 +613,7 @@ export default function ChartWidget() {
         .map((candle) => candle.time)
         .sort((a, b) => a - b);
 
-      if (rsiBandSeriesRef.current) {
-        const upperLevel = Math.max(obLevel, osLevel);
-        const lowerLevel = Math.min(obLevel, osLevel);
-        rsiBandSeriesRef.current.applyOptions({
-          baseValue: { type: 'price', price: lowerLevel },
-          relativeGradient: false,
-          topFillColor1: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
-          topFillColor2: theme === 'dark' ? 'rgba(244, 114, 182, 0.14)' : 'rgba(244, 114, 182, 0.18)',
-          topLineColor: 'rgba(0, 0, 0, 0)',
-          bottomFillColor1: 'rgba(0, 0, 0, 0)',
-          bottomFillColor2: 'rgba(0, 0, 0, 0)',
-          bottomLineColor: 'rgba(0, 0, 0, 0)',
-        });
-        rsiBandSeriesRef.current.setData(makeBandBaselineData(upperLevel, candleTimes));
-      }
+      rsiChartRef.current?.priceScale('right').setVisibleRange({ from: 0, to: 100 });
 
       rsiSeriesRef.current.setData(alignLineDataToTimes(allRsiData.rsi, candleTimes));
       if (smaRsiSeriesRef.current && allRsiData.sma_rsi) {
@@ -670,7 +633,7 @@ export default function ChartWidget() {
       }
       requestAnimationFrame(() => syncRsiLogicalRange());
     }
-  }, [showRsi, allRsiData, allCandles, obLevel, osLevel, syncRsiLogicalRange, theme]);
+  }, [showRsi, allRsiData, allCandles, obLevel, osLevel, syncRsiLogicalRange]);
 
   useEffect(() => {
     if (showRsi) return;
@@ -720,6 +683,11 @@ export default function ChartWidget() {
         >
           <div ref={rsiContainerRef} className="absolute inset-0" data-testid="rsi-chart" />
           <div
+            aria-hidden="true"
+            className="pointer-events-none absolute left-0 right-[70px] z-10 bg-pink-400/10"
+            style={{ top: rsiBandTop, height: rsiBandHeight }}
+          />
+          <div
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
@@ -742,7 +710,7 @@ export default function ChartWidget() {
             <div className="space-y-1 rounded-sm bg-background/70 px-1.5 py-1 shadow-sm backdrop-blur">
               <div>
                 <span>RSI {rsiPeriod} {rsiSource}</span>
-                <span className="ml-1 font-medium text-[#8b5cf6]">
+                <span className="ml-1 font-medium text-[#a855f7]">
                   {rsiValue === null ? '--' : rsiValue.toFixed(2)}
                 </span>
               </div>

@@ -20,7 +20,7 @@ export function useWebsocket(symbol: string, interval: string) {
 
       setStatus('connecting');
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/ws/candles`;
+      const wsUrl = `${proto}//${window.location.host}/api/ws/candles`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

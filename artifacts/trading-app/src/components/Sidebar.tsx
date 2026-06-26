@@ -95,22 +95,9 @@ function MaSection({
   );
 }
 
-export default function Sidebar() {
+export function ProfilesPanel() {
   const {
     profiles, activeProfileId, saveProfile, loadProfile, deleteProfile,
-    rsiPeriod, setRsiPeriod,
-    rsiSource, setRsiSource,
-    rsiLineWidth, setRsiLineWidth,
-    showRsi, setShowRsi,
-    showRsiBb, setShowRsiBb,
-    showStochRsi, setShowStochRsi,
-    showDivergences, setShowDivergences,
-    showMtf, setShowMtf,
-    smaMa, setSmaMa,
-    emaMa, setEmaMa,
-    wmaMa, setWmaMa,
-    obLevel, setObLevel,
-    osLevel, setOsLevel
   } = useTradingStore();
   const [profileName, setProfileName] = React.useState('');
   const selectedProfile = profiles.find((profile) => profile.id === activeProfileId);
@@ -125,59 +112,78 @@ export default function Sidebar() {
   };
 
   return (
-    <div className="w-80 border-l border-border bg-card p-4 flex flex-col gap-6 overflow-y-auto" data-testid="sidebar">
-      <div className="space-y-3">
-        <h3 className="text-lg font-semibold text-foreground">Chart Profiles</h3>
+    <div className="space-y-3">
+      <h3 className="text-lg font-semibold text-foreground">Chart Profiles</h3>
 
-        <div className="flex gap-2">
-          <Input
-            value={profileName}
-            onChange={(event) => setProfileName(event.target.value)}
-            placeholder={selectedProfile?.name || 'Profile name'}
-            data-testid="input-profile-name"
-          />
-          <Button
-            type="button"
-            size="icon"
-            onClick={handleSaveProfile}
-            aria-label="Save chart profile"
-            data-testid="btn-save-profile"
-          >
-            <Save className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="flex gap-2">
-          <Select value={activeProfileId ?? undefined} onValueChange={handleSelectProfile}>
-            <SelectTrigger className="flex-1" data-testid="select-chart-profile">
-              <SelectValue placeholder="Select profile" />
-            </SelectTrigger>
-            <SelectContent>
-              {profiles.map((profile) => (
-                <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            disabled={!activeProfileId}
-            onClick={() => {
-              if (activeProfileId) {
-                deleteProfile(activeProfileId);
-              }
-            }}
-            aria-label="Delete chart profile"
-            data-testid="btn-delete-profile"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
+      <div className="flex gap-2">
+        <Input
+          value={profileName}
+          onChange={(event) => setProfileName(event.target.value)}
+          placeholder={selectedProfile?.name || 'Profile name'}
+          data-testid="input-profile-name"
+        />
+        <Button
+          type="button"
+          size="icon"
+          onClick={handleSaveProfile}
+          aria-label="Save chart profile"
+          data-testid="btn-save-profile"
+        >
+          <Save className="h-4 w-4" />
+        </Button>
       </div>
 
-      <div>
-        <h3 className="text-lg font-semibold text-foreground mb-4">Indicators</h3>
+      <div className="flex gap-2">
+        <Select value={activeProfileId ?? undefined} onValueChange={handleSelectProfile}>
+          <SelectTrigger className="flex-1" data-testid="select-chart-profile">
+            <SelectValue placeholder="Select profile" />
+          </SelectTrigger>
+          <SelectContent>
+            {profiles.map((profile) => (
+              <SelectItem key={profile.id} value={profile.id}>{profile.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          disabled={!activeProfileId}
+          onClick={() => {
+            if (activeProfileId) {
+              deleteProfile(activeProfileId);
+            }
+          }}
+          aria-label="Delete chart profile"
+          data-testid="btn-delete-profile"
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function IndicatorsPanel() {
+  const {
+    rsiPeriod, setRsiPeriod,
+    rsiSource, setRsiSource,
+    rsiLineWidth, setRsiLineWidth,
+    showRsi, setShowRsi,
+    showRsiBb, setShowRsiBb,
+    showStochRsi, setShowStochRsi,
+    showDivergences, setShowDivergences,
+    showMtf, setShowMtf,
+    smaMa, setSmaMa,
+    emaMa, setEmaMa,
+    wmaMa, setWmaMa,
+    obLevel, setObLevel,
+    osLevel, setOsLevel
+  } = useTradingStore();
+
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-foreground mb-4">Indicators</h3>
         
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -274,7 +280,15 @@ export default function Sidebar() {
             </div>
           )}
         </div>
-      </div>
+    </div>
+  );
+}
+
+export default function Sidebar() {
+  return (
+    <div className="w-80 border-l border-border bg-card p-4 flex flex-col gap-6 overflow-y-auto" data-testid="sidebar">
+      <ProfilesPanel />
+      <IndicatorsPanel />
     </div>
   );
 }

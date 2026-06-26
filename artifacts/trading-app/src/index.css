@@ -78,7 +78,7 @@
   --card-foreground: 222 47% 11%;
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
-  --primary: 221 83% 53%;
+  --primary: 262 83% 58%;
   --primary-foreground: 210 40% 98%;
   --secondary: 210 40% 96.1%;
   --secondary-foreground: 222 47% 11%;
@@ -90,17 +90,17 @@
   --destructive-foreground: 210 40% 98%;
   --border: 214.3 31.8% 91.4%;
   --input: 214.3 31.8% 91.4%;
-  --ring: 221 83% 53%;
+  --ring: 262 83% 58%;
   --radius: 0.25rem;
 
   --sidebar: 210 20% 98%;
   --sidebar-foreground: 222 47% 11%;
   --sidebar-border: 214.3 31.8% 91.4%;
-  --sidebar-primary: 221 83% 53%;
+  --sidebar-primary: 262 83% 58%;
   --sidebar-primary-foreground: 210 40% 98%;
   --sidebar-accent: 210 40% 96.1%;
   --sidebar-accent-foreground: 222 47% 11%;
-  --sidebar-ring: 221 83% 53%;
+  --sidebar-ring: 262 83% 58%;
 
   --app-font-sans: 'Inter', sans-serif;
   --app-font-mono: 'JetBrains Mono', 'Menlo', monospace;
@@ -113,48 +113,55 @@
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
 
-  /* Deep Bloomberg-esque dark terminal */
-  --background: 224 25% 6%;
+  --background: 0 0% 0%;
   --foreground: 210 40% 98%;
-  --card: 224 25% 8%;
+  --card: 0 0% 3%;
   --card-foreground: 210 40% 98%;
-  --popover: 224 25% 8%;
+  --popover: 0 0% 4%;
   --popover-foreground: 210 40% 98%;
   
-  --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
+  --primary: 262 83% 58%;
+  --primary-foreground: 0 0% 100%;
   
-  --secondary: 224 25% 12%;
+  --secondary: 260 20% 10%;
   --secondary-foreground: 210 40% 98%;
   
-  --muted: 224 25% 12%;
-  --muted-foreground: 215 20.2% 65.1%;
+  --muted: 260 16% 10%;
+  --muted-foreground: 255 18% 68%;
   
-  --accent: 224 25% 14%;
+  --accent: 262 42% 16%;
   --accent-foreground: 210 40% 98%;
   
   --destructive: 0 62.8% 30.6%;
   --destructive-foreground: 210 40% 98%;
   
-  --border: 224 25% 14%;
-  --input: 224 25% 14%;
-  --ring: 224.3 76.3% 48%;
+  --border: 262 28% 16%;
+  --input: 262 28% 16%;
+  --ring: 262 83% 58%;
 
-  --sidebar: 224 25% 6%;
+  --sidebar: 0 0% 0%;
   --sidebar-foreground: 210 40% 98%;
-  --sidebar-border: 224 25% 14%;
-  --sidebar-primary: 217.2 91.2% 59.8%;
-  --sidebar-primary-foreground: 222.2 47.4% 11.2%;
-  --sidebar-accent: 224 25% 12%;
+  --sidebar-border: 262 28% 16%;
+  --sidebar-primary: 262 83% 58%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 262 42% 16%;
   --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-ring: 217.2 91.2% 59.8%;
+  --sidebar-ring: 262 83% 58%;
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    overscroll-behavior-x: none;
+  }
+
   * {
     @apply border-border;
   }
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    min-height: 100dvh;
   }
 }

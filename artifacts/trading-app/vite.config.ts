@@ -4,13 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 
-const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
+const rawPort = process.env.PORT || "3000";
 
 const port = Number(rawPort);
 
@@ -63,6 +57,7 @@ export default defineConfig({
       "/api": {
         target: backendTarget,
         changeOrigin: true,
+        ws: true,
       },
       "/ws": {
         target: backendTarget,
