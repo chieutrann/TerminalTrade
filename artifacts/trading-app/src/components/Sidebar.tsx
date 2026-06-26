@@ -100,6 +100,7 @@ export default function Sidebar() {
     profiles, activeProfileId, saveProfile, loadProfile, deleteProfile,
     rsiPeriod, setRsiPeriod,
     rsiSource, setRsiSource,
+    rsiLineWidth, setRsiLineWidth,
     showRsi, setShowRsi,
     showRsiBb, setShowRsiBb,
     showStochRsi, setShowStochRsi,
@@ -210,6 +211,18 @@ export default function Sidebar() {
                     <SelectItem value="ohlc4">OHLC4</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>RSI Width: {rsiLineWidth}</Label>
+                <Slider
+                  value={[rsiLineWidth]}
+                  onValueChange={(v) => setRsiLineWidth(v[0] as 1 | 2 | 3 | 4)}
+                  min={1}
+                  max={4}
+                  step={1}
+                  data-testid="slider-rsi-line-width"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">

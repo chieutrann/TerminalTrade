@@ -25,6 +25,7 @@ export type ChartProfileData = {
   theme: 'light' | 'dark';
   rsiPeriod: number;
   rsiSource: string;
+  rsiLineWidth: 1 | 2 | 3 | 4;
   showRsi: boolean;
   showRsiBb: boolean;
   showStochRsi: boolean;
@@ -52,6 +53,7 @@ type StoreState = {
   theme: 'light' | 'dark';
   rsiPeriod: number;
   rsiSource: string;
+  rsiLineWidth: 1 | 2 | 3 | 4;
   showRsi: boolean;
   showRsiBb: boolean;
   showStochRsi: boolean;
@@ -71,6 +73,7 @@ type StoreState = {
   setTheme: (t: 'light' | 'dark') => void;
   setRsiPeriod: (p: number) => void;
   setRsiSource: (s: string) => void;
+  setRsiLineWidth: (w: 1 | 2 | 3 | 4) => void;
   setShowRsi: (s: boolean) => void;
   setShowRsiBb: (s: boolean) => void;
   setShowStochRsi: (s: boolean) => void;
@@ -94,6 +97,7 @@ function createProfileData(state: StoreState): ChartProfileData {
     theme: state.theme,
     rsiPeriod: state.rsiPeriod,
     rsiSource: state.rsiSource,
+    rsiLineWidth: state.rsiLineWidth,
     showRsi: state.showRsi,
     showRsiBb: state.showRsiBb,
     showStochRsi: state.showStochRsi,
@@ -116,6 +120,7 @@ export const useTradingStore = create<StoreState>()(
       theme: 'dark',
       rsiPeriod: 14,
       rsiSource: 'close',
+      rsiLineWidth: 2,
       showRsi: true,
       showRsiBb: false,
       showStochRsi: false,
@@ -135,6 +140,7 @@ export const useTradingStore = create<StoreState>()(
       setTheme: (theme) => set({ theme }),
       setRsiPeriod: (rsiPeriod) => set({ rsiPeriod }),
       setRsiSource: (rsiSource) => set({ rsiSource }),
+      setRsiLineWidth: (rsiLineWidth) => set({ rsiLineWidth }),
       setShowRsi: (showRsi) => set({ showRsi }),
       setShowRsiBb: (showRsiBb) => set({ showRsiBb }),
       setShowStochRsi: (showStochRsi) => set({ showStochRsi }),
@@ -180,6 +186,7 @@ export const useTradingStore = create<StoreState>()(
 
         return {
           ...profile.data,
+          rsiLineWidth: profile.data.rsiLineWidth ?? state.rsiLineWidth ?? 2,
           smaMa: { ...profile.data.smaMa },
           emaMa: { ...profile.data.emaMa },
           wmaMa: { ...profile.data.wmaMa },
