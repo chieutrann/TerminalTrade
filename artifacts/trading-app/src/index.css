@@ -181,7 +181,8 @@
     body {
       position: fixed;
       inset: 0;
-      touch-action: manipulation;
+      overflow: hidden;
+      overscroll-behavior: none;
     }
   }
 }

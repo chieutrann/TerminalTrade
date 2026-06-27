@@ -130,6 +130,152 @@ function formatChartDate(time: Time, timeZone: string): string {
   }
 }
 
+type TimeLabelContext = {
+  barSpacing: number;
+  visibleBars: number;
+  version: number;
+};
+
+type ZonedTimeParts = {
+  day: number;
+  month: string;
+  hour: string;
+  minute: string;
+  second: string;
+  dateKey: string;
+  weekKey: string;
+  monthKey: string;
+  isStartOfDay: boolean;
+};
+
+function getWeekKey(year: number, month: number, day: number) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - ((dayOfWeek + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+const SHORT_MONTH_TO_NUMBER: Record<string, number> = {
+  Jan: 1,
+  Feb: 2,
+  Mar: 3,
+  Apr: 4,
+  May: 5,
+  Jun: 6,
+  Jul: 7,
+  Aug: 8,
+  Sept: 9,
+  Sep: 9,
+  Oct: 10,
+  Nov: 11,
+  Dec: 12,
+};
+
+function getZonedTimeParts(timestamp: number, timeZone: string): ZonedTimeParts | null {
+  const resolvedTimeZone = resolveChartTimeZone(timeZone);
+  const date = new Date(timestamp * 1000);
+
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: resolvedTimeZone,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).formatToParts(date);
+    const value = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((part) => part.type === type)?.value ?? "";
+    const day = Number(value("day"));
+    const month = value("month");
+    const monthNumber = SHORT_MONTH_TO_NUMBER[month] ?? 1;
+    const year = Number(value("year"));
+    const hour = value("hour").padStart(2, "0");
+    const minute = value("minute").padStart(2, "0");
+    const second = value("second").padStart(2, "0");
+
+    return {
+      day,
+      month,
+      hour,
+      minute,
+      second,
+      dateKey: `${year}-${month}-${day}`,
+      weekKey: getWeekKey(year, monthNumber, day),
+      monthKey: `${year}-${month}`,
+      isStartOfDay: hour === "00" && minute === "00" && second === "00",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatDynamicChartTick(params: {
+  timestamp: number;
+  previousTimestamp?: number;
+  timeZone: string;
+  intervalSeconds: number | null;
+  context: TimeLabelContext;
+  emittedBuckets: Set<string>;
+}) {
+  const parts = getZonedTimeParts(params.timestamp, params.timeZone);
+  if (!parts) return formatChartTime(params.timestamp as Time, params.timeZone);
+
+  const previousParts =
+    params.previousTimestamp !== undefined
+      ? getZonedTimeParts(params.previousTimestamp, params.timeZone)
+      : null;
+  const hasPrevious = previousParts !== null;
+  const monthChanged = hasPrevious && previousParts.monthKey !== parts.monthKey;
+  const weekChanged = hasPrevious && previousParts.weekKey !== parts.weekKey;
+  const dayChanged = hasPrevious && previousParts.dateKey !== parts.dateKey;
+  const nearDayStart = parts.hour === "00" && Number(parts.minute) <= 30;
+  const isVeryZoomedIn = params.context.barSpacing >= 28 || params.context.visibleBars <= 24;
+  const isZoomedIn = params.context.barSpacing >= 18 || params.context.visibleBars <= 45;
+  const showSeconds =
+    isVeryZoomedIn &&
+    ((params.intervalSeconds !== null && params.intervalSeconds < 60) ||
+      parts.second !== "00");
+  const timeLabel = showSeconds
+    ? `${parts.hour}:${parts.minute}:${parts.second}`
+    : `${parts.hour}:${parts.minute}`;
+  const dayMonthLabel = `${parts.day} ${parts.month}`;
+  const emitBucket = (bucket: string, label: string) => {
+    if (params.emittedBuckets.has(bucket)) return timeLabel;
+    params.emittedBuckets.add(bucket);
+    return label;
+  };
+  const emitDayMarker = (label = `${parts.day}`) =>
+    emitBucket(`day:${parts.dateKey}`, label);
+  const shouldShowDayMarker =
+    dayChanged || nearDayStart || !params.emittedBuckets.has(`day:${parts.dateKey}`);
+
+  if (params.context.barSpacing < 4 || params.context.visibleBars > 260) {
+    if (!hasPrevious || monthChanged) return emitBucket(`month:${parts.monthKey}`, parts.month);
+    if (weekChanged) return emitBucket(`week:${parts.weekKey}`, dayMonthLabel);
+    if (shouldShowDayMarker) return emitDayMarker();
+    return timeLabel;
+  }
+
+  if (params.context.barSpacing < 10 || params.context.visibleBars > 90) {
+    if (!hasPrevious || monthChanged) return emitBucket(`month:${parts.monthKey}`, parts.month);
+    if (weekChanged) return emitBucket(`week:${parts.weekKey}`, dayMonthLabel);
+    if (shouldShowDayMarker) return emitDayMarker();
+    return timeLabel;
+  }
+
+  if (!isZoomedIn) {
+    if (monthChanged || weekChanged) return `${dayMonthLabel} ${timeLabel}`;
+    if (shouldShowDayMarker) return emitDayMarker();
+    return timeLabel;
+  }
+
+  if (dayChanged) return `${dayMonthLabel} ${timeLabel}`;
+  return timeLabel;
+}
+
 
 function intervalToSeconds(interval: string): number | null {
   const normalized = interval.trim();
@@ -610,6 +756,18 @@ const fixedRsiAutoscale = () => ({
   },
 });
 
+function isValidLogicalRange(range: LogicalRange | null | undefined): range is LogicalRange {
+  return !!range && range.from != null && range.to != null;
+}
+
+function areLogicalRangesClose(
+  a: LogicalRange | null | undefined,
+  b: LogicalRange | null | undefined,
+) {
+  if (!isValidLogicalRange(a) || !isValidLogicalRange(b)) return false;
+  return Math.abs(a.from - b.from) < 0.001 && Math.abs(a.to - b.to) < 0.001;
+}
+
 function readSeriesValue(
   params: MouseEventParams<Time>,
   series: ISeriesApi<"Line"> | null,
@@ -621,6 +779,16 @@ function readSeriesValue(
 
   const value = data.value;
   return typeof value === "number" ? value : null;
+}
+
+function getSafeCandleIndex(time: Time, maxLength: number): number | null {
+  if (typeof time !== "number" || !Number.isFinite(time)) return null;
+
+  const index = Math.floor(time + 0.000001);
+
+  if (index < 0 || index >= maxLength) return null;
+
+  return index;
 }
 
 export default function ChartWidget() {
@@ -690,6 +858,22 @@ export default function ChartWidget() {
   const isLoadingHistoryRef = useRef<boolean>(false);
   const isSyncingLogicalRangeRef = useRef(false);
   const synchronizedRenderFrameRef = useRef<number | null>(null);
+  const logicalRangeSyncFrameRef = useRef<number | null>(null);
+  const pendingLogicalRangeRef = useRef<LogicalRange | null>(null);
+  const pendingLogicalRangeSourceRef = useRef<"main" | "rsi">("main");
+  const lastSyncedLogicalRangeRef = useRef<LogicalRange | null>(null);
+  const timeLabelContextRef = useRef<TimeLabelContext>({
+    barSpacing: 8,
+    visibleBars: 80,
+    version: 0,
+  });
+  const timeLabelBucketsRef = useRef<{
+    version: number;
+    buckets: Set<string>;
+  }>({
+    version: 0,
+    buckets: new Set(),
+  });
   const rsiResizeFrameRef = useRef<number | null>(null);
   const rsiValueRangeRef = useRef({ from: 0, to: 100 });
   const lastRsiFetchEarliestRef = useRef<number | null>(null);
@@ -814,6 +998,13 @@ export default function ChartWidget() {
     ],
   );
 
+  const isCoarsePointer = useMemo(
+    () =>
+      typeof window !== "undefined" &&
+      window.matchMedia("(pointer: coarse)").matches,
+    [],
+  );
+
   useEffect(() => {
     lockedCandlesRef.current = allCandles;
   }, [allCandles]);
@@ -830,29 +1021,73 @@ export default function ChartWidget() {
     () => getTimeZoneAbbreviation(chartTimeZone),
     [chartTimeZone],
   );
+  const intervalSecondsForLabels = useMemo(
+    () => intervalToSeconds(interval),
+    [interval],
+  );
+
+  const updateTimeLabelContext = useCallback((range?: LogicalRange | null) => {
+    const chart = chartRef.current ?? rsiChartRef.current;
+    if (!chart) return;
+
+    const timeScale = chart.timeScale();
+    const nextRange = range ?? timeScale.getVisibleLogicalRange();
+    if (!isValidLogicalRange(nextRange)) return;
+
+    const visibleBars = Math.max(1, nextRange.to - nextRange.from);
+    const width = Math.max(1, timeScale.width());
+    const previous = timeLabelContextRef.current;
+    timeLabelContextRef.current = {
+      visibleBars,
+      barSpacing: width / visibleBars,
+      version:
+        Math.abs(previous.visibleBars - visibleBars) > 0.001 ||
+        Math.abs(previous.barSpacing - width / visibleBars) > 0.001
+          ? previous.version + 1
+          : previous.version,
+    };
+  }, []);
 
   const formatIndexedChartTime = useCallback(
     (
       time: Time,
       options?: { includeDate?: boolean; includeSeconds?: boolean },
     ): string => {
-      const index = typeof time === "number" ? Math.round(time) : Number.NaN;
-      const timestamp = Number.isFinite(index)
-        ? sortedCandleTimesRef.current[index]
-        : undefined;
+      const index = getSafeCandleIndex(time, sortedCandleTimesRef.current.length);
+      const timestamp =
+        index !== null ? sortedCandleTimesRef.current[index] : undefined;
 
       if (timestamp === undefined) return "";
+      if (!options) {
+        const context = timeLabelContextRef.current;
+        if (timeLabelBucketsRef.current.version !== context.version) {
+          timeLabelBucketsRef.current = {
+            version: context.version,
+            buckets: new Set(),
+          };
+        }
+
+        return formatDynamicChartTick({
+          timestamp,
+          previousTimestamp:
+            index > 0 ? sortedCandleTimesRef.current[index - 1] : undefined,
+          timeZone: chartTimeZone,
+          intervalSeconds: intervalSecondsForLabels,
+          context,
+          emittedBuckets: timeLabelBucketsRef.current.buckets,
+        });
+      }
+
       return formatChartTime(timestamp as Time, chartTimeZone, options);
     },
-    [chartTimeZone],
+    [chartTimeZone, intervalSecondsForLabels],
   );
 
   const formatIndexedChartDate = useCallback(
     (time: Time): string => {
-      const index = typeof time === "number" ? Math.round(time) : Number.NaN;
-      const timestamp = Number.isFinite(index)
-        ? sortedCandleTimesRef.current[index]
-        : undefined;
+      const index = getSafeCandleIndex(time, sortedCandleTimesRef.current.length);
+      const timestamp =
+        index !== null ? sortedCandleTimesRef.current[index] : undefined;
 
       if (timestamp === undefined) return "";
       return formatChartDate(timestamp as Time, chartTimeZone);
@@ -1015,7 +1250,12 @@ export default function ChartWidget() {
       return;
     }
 
-    const roundedIndex = Math.round(index);
+    const roundedIndex = getSafeCandleIndex(index as Time, renderCandlesRef.current.length);
+    if (roundedIndex === null) {
+      clearSyncedCrosshair();
+      return;
+    }
+
     const candle = renderCandlesRef.current[roundedIndex];
     if (!candle) {
       clearSyncedCrosshair();
@@ -1067,14 +1307,67 @@ export default function ChartWidget() {
     const rsiTs = rsiChartRef.current.timeScale();
     const nextRange = range ?? mainTs.getVisibleLogicalRange();
 
-    if (nextRange && nextRange.from != null && nextRange.to != null) {
+    if (isValidLogicalRange(nextRange)) {
+      updateTimeLabelContext(nextRange);
+      const currentRange = rsiTs.getVisibleLogicalRange();
+      if (areLogicalRangesClose(currentRange, nextRange)) return;
+
       isSyncingLogicalRangeRef.current = true;
       rsiTs.setVisibleLogicalRange(nextRange);
+      lastSyncedLogicalRangeRef.current = nextRange;
       requestAnimationFrame(() => {
         isSyncingLogicalRangeRef.current = false;
       });
     }
-  }, []);
+  }, [updateTimeLabelContext]);
+
+  const scheduleLogicalRangeSync = useCallback(
+    (range: LogicalRange | null, source: "main" | "rsi") => {
+      if (!isValidLogicalRange(range)) return;
+
+      updateTimeLabelContext(range);
+      pendingLogicalRangeRef.current = range;
+      pendingLogicalRangeSourceRef.current = source;
+
+      if (logicalRangeSyncFrameRef.current !== null) return;
+
+      logicalRangeSyncFrameRef.current = window.requestAnimationFrame(() => {
+        logicalRangeSyncFrameRef.current = null;
+
+        const nextRange = pendingLogicalRangeRef.current;
+        const nextSource = pendingLogicalRangeSourceRef.current;
+        pendingLogicalRangeRef.current = null;
+
+        if (!chartRef.current || !rsiChartRef.current || !isValidLogicalRange(nextRange)) {
+          return;
+        }
+
+        updateTimeLabelContext(nextRange);
+        if (areLogicalRangesClose(lastSyncedLogicalRangeRef.current, nextRange)) {
+          updateRsiBandOverlay();
+          return;
+        }
+
+        const targetTimeScale =
+          nextSource === "main"
+            ? rsiChartRef.current.timeScale()
+            : chartRef.current.timeScale();
+        const currentTargetRange = targetTimeScale.getVisibleLogicalRange();
+
+        isSyncingLogicalRangeRef.current = true;
+        if (!areLogicalRangesClose(currentTargetRange, nextRange)) {
+          targetTimeScale.setVisibleLogicalRange(nextRange);
+        }
+        lastSyncedLogicalRangeRef.current = nextRange;
+        updateRsiBandOverlay();
+
+        window.requestAnimationFrame(() => {
+          isSyncingLogicalRangeRef.current = false;
+        });
+      });
+    },
+    [updateRsiBandOverlay, updateTimeLabelContext],
+  );
 
   const scheduleSynchronizedRender = useCallback(() => {
     if (synchronizedRenderFrameRef.current !== null) return;
@@ -1279,6 +1572,7 @@ export default function ChartWidget() {
 
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
+    updateTimeLabelContext();
     timeScaleRef.current = {
       indexToX: (index: number) =>
         chart.timeScale().logicalToCoordinate(index as Logical),
@@ -1294,6 +1588,7 @@ export default function ChartWidget() {
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (isSyncingCrosshairRef.current) return;
+      if (isCoarsePointer) return;
       if (typeof param.time !== "number") {
         clearSyncedCrosshair();
         return;
@@ -1307,6 +1602,10 @@ export default function ChartWidget() {
       if (synchronizedRenderFrameRef.current !== null) {
         window.cancelAnimationFrame(synchronizedRenderFrameRef.current);
         synchronizedRenderFrameRef.current = null;
+      }
+      if (logicalRangeSyncFrameRef.current !== null) {
+        window.cancelAnimationFrame(logicalRangeSyncFrameRef.current);
+        logicalRangeSyncFrameRef.current = null;
       }
       if (rsiResizeFrameRef.current !== null) {
         window.cancelAnimationFrame(rsiResizeFrameRef.current);
@@ -1322,7 +1621,14 @@ export default function ChartWidget() {
       delete (window as typeof window & { logAlignment?: unknown })
         .logAlignment;
     };
-  }, [chartOptions, logAlignment, clearSyncedCrosshair, syncCrosshairAtIndex]);
+  }, [
+    chartOptions,
+    logAlignment,
+    clearSyncedCrosshair,
+    syncCrosshairAtIndex,
+    isCoarsePointer,
+    updateTimeLabelContext,
+  ]);
 
   useEffect(() => {
     if (!showRsi || !rsiContainerRef.current) return;
@@ -1485,6 +1791,7 @@ export default function ChartWidget() {
     obSeriesRef.current = obSeries;
     osSeriesRef.current = osSeries;
     chart.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
+    updateTimeLabelContext();
 
     let unsubMain: (() => void) | null = null;
 
@@ -1493,24 +1800,11 @@ export default function ChartWidget() {
       const rsiTs = chart.timeScale();
       const onMainChange = (range: LogicalRange | null) => {
         if (isSyncingLogicalRangeRef.current) return;
-        isSyncingLogicalRangeRef.current = true;
-        window.requestAnimationFrame(() => {
-          syncRsiLogicalRange(range);
-          updateRsiBandOverlay();
-          isSyncingLogicalRangeRef.current = false;
-        });
+        scheduleLogicalRangeSync(range, "main");
       };
       const onRsiChange = (range: LogicalRange | null) => {
         if (!chartRef.current || isSyncingLogicalRangeRef.current) return;
-        if (!range || range.from == null || range.to == null) return;
-
-        isSyncingLogicalRangeRef.current = true;
-        chartRef.current.timeScale().setVisibleLogicalRange(range);
-        window.requestAnimationFrame(() => {
-          syncRsiLogicalRange(range);
-          updateRsiBandOverlay();
-          isSyncingLogicalRangeRef.current = false;
-        });
+        scheduleLogicalRangeSync(range, "rsi");
       };
       mainTs.subscribeVisibleLogicalRangeChange(onMainChange);
       rsiTs.subscribeVisibleLogicalRangeChange(onRsiChange);
@@ -1527,7 +1821,7 @@ export default function ChartWidget() {
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (isSyncingCrosshairRef.current) return;
-      updateRsiBandOverlay();
+      if (isCoarsePointer) return;
 
       if (typeof param.time !== "number" || !param.seriesData.size) {
         setHoveredRsiValues(null);
@@ -1551,6 +1845,7 @@ export default function ChartWidget() {
           height: rsiContainerRef.current.clientHeight,
           width: rsiContainerRef.current.clientWidth,
         });
+        updateTimeLabelContext();
         scheduleSynchronizedRender();
       }
     };
@@ -1559,6 +1854,10 @@ export default function ChartWidget() {
 
     return () => {
       unsubMain?.();
+      if (logicalRangeSyncFrameRef.current !== null) {
+        window.cancelAnimationFrame(logicalRangeSyncFrameRef.current);
+        logicalRangeSyncFrameRef.current = null;
+      }
       try {
         chart.unsubscribeCrosshairMove(onCrosshairMove);
       } catch {}
@@ -1602,11 +1901,13 @@ export default function ChartWidget() {
     showStochRsi,
     obLevel,
     osLevel,
-    syncRsiLogicalRange,
+    scheduleLogicalRangeSync,
     scheduleSynchronizedRender,
     updateRsiBandOverlay,
+    updateTimeLabelContext,
     clearSyncedCrosshair,
     syncCrosshairAtIndex,
+    isCoarsePointer,
   ]);
 
   useLayoutEffect(() => {

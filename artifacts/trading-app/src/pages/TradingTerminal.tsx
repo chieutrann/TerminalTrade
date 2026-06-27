@@ -12,6 +12,66 @@ import { Activity, BarChart3, UserRoundCog } from 'lucide-react';
 
 type BottomPanel = 'indicators' | 'profiles' | null;
 
+function useMobilePageScrollLock() {
+  React.useEffect(() => {
+    const isMobile =
+      window.matchMedia('(pointer: coarse)').matches ||
+      window.matchMedia('(max-width: 768px)').matches;
+
+    if (!isMobile) return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const scrollY = window.scrollY;
+    const previous = {
+      htmlOverflow: html.style.overflow,
+      htmlOverscrollBehavior: html.style.overscrollBehavior,
+      bodyOverflow: body.style.overflow,
+      bodyOverscrollBehavior: body.style.overscrollBehavior,
+      bodyPosition: body.style.position,
+      bodyInset: body.style.inset,
+      bodyTop: body.style.top,
+      bodyWidth: body.style.width,
+      bodyHeight: body.style.height,
+    };
+
+    html.style.overflow = 'hidden';
+    html.style.overscrollBehavior = 'none';
+    body.style.overflow = 'hidden';
+    body.style.overscrollBehavior = 'none';
+    body.style.position = 'fixed';
+    body.style.inset = '0';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    body.style.height = '100dvh';
+
+    const preventPageTouchMove = (event: TouchEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('[data-mobile-scroll="true"]')) return;
+      event.preventDefault();
+    };
+
+    document.addEventListener('touchmove', preventPageTouchMove, {
+      passive: false,
+      capture: false,
+    });
+
+    return () => {
+      document.removeEventListener('touchmove', preventPageTouchMove);
+      html.style.overflow = previous.htmlOverflow;
+      html.style.overscrollBehavior = previous.htmlOverscrollBehavior;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.overscrollBehavior = previous.bodyOverscrollBehavior;
+      body.style.position = previous.bodyPosition;
+      body.style.inset = previous.bodyInset;
+      body.style.top = previous.bodyTop;
+      body.style.width = previous.bodyWidth;
+      body.style.height = previous.bodyHeight;
+      window.scrollTo(0, scrollY);
+    };
+  }, []);
+}
+
 function BottomNav({ activePanel, onChange }: { activePanel: BottomPanel; onChange: (panel: BottomPanel) => void }) {
   const itemClass = (active: boolean) =>
     `flex h-12 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] ${
@@ -40,6 +100,7 @@ function BottomNav({ activePanel, onChange }: { activePanel: BottomPanel; onChan
 
 export default function TradingTerminal() {
   const [activePanel, setActivePanel] = React.useState<BottomPanel>(null);
+  useMobilePageScrollLock();
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-background text-foreground">
@@ -54,7 +115,7 @@ export default function TradingTerminal() {
           <DrawerHeader>
             <DrawerTitle>{activePanel === 'profiles' ? 'Profiles' : 'Indicators'}</DrawerTitle>
           </DrawerHeader>
-          <div className="overflow-y-auto px-4 pb-6">
+          <div data-mobile-scroll="true" className="overflow-y-auto px-4 pb-6">
             {activePanel === 'profiles' ? <ProfilesPanel /> : <IndicatorsPanel />}
           </div>
         </DrawerContent>
