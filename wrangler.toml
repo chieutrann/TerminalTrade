@@ -1,0 +1,6 @@
+name = "trade-terminal"
+compatibility_date = "2025-12-01"
+
+[assets]
+directory = "./artifacts/trading-app/dist/public"
+not_found_handling = "single-page-application"
