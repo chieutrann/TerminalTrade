@@ -4,6 +4,7 @@ fans out candle updates to all subscribed frontend clients.
 """
 import asyncio
 import logging
+import time
 from typing import Callable
 
 from app.exchanges.base import BaseExchange
@@ -54,7 +55,9 @@ class ExchangeManager:
         exchange_name = self.get_exchange_name(symbol)
 
         try:
-            candles = await exchange.fetch_historical_candles(symbol, interval, limit, before)
+            fetch_limit = limit + 1 if before is None else limit
+            raw_candles = await exchange.fetch_historical_candles(symbol, interval, fetch_limit, before)
+            candles = self._closed_historical_candles(raw_candles, interval)[-limit:]
             if not before:
                 self._cache.seed(symbol, interval, candles)
             else:
@@ -66,6 +69,21 @@ class ExchangeManager:
             self._exchange_status[exchange_name] = "error"
             logger.error(f"Failed to fetch historical for {symbol} {interval}: {e}")
             raise
+
+    def _closed_historical_candles(self, candles: list[Candle], interval: str) -> list[Candle]:
+        from app.config import parse_interval_seconds
+
+        interval_seconds = parse_interval_seconds(interval)
+        now = int(time.time())
+        deduped: dict[int, Candle] = {}
+
+        for candle in candles:
+            normalized = candle.model_copy(deep=True)
+            normalized.is_closed = normalized.time + interval_seconds <= now
+            if normalized.is_closed:
+                deduped[normalized.time] = normalized
+
+        return [deduped[time_key] for time_key in sorted(deduped)]
 
     async def subscribe(
         self,
@@ -89,13 +107,14 @@ class ExchangeManager:
         exchange_name = self.get_exchange_name(symbol)
 
         def fan_out(candle: Candle) -> None:
-            self._cache.upsert(symbol, interval, candle)
+            immutable_candle = candle.model_copy(deep=True)
+            self._cache.upsert(symbol, interval, immutable_candle)
             self._exchange_status[exchange_name] = "connected"
             callbacks = self._subscribers.get(key, [])
             dead = []
             for cb in callbacks:
                 try:
-                    cb(candle)
+                    cb(immutable_candle.model_copy(deep=True))
                 except Exception as e:
                     logger.warning(f"Subscriber callback error: {e}")
                     dead.append(cb)

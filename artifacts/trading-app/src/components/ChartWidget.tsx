@@ -19,6 +19,7 @@ import {
   type LineData,
   type WhitespaceData,
   type LogicalRange,
+  type Logical,
 } from "lightweight-charts";
 import { useTradingStore } from "../store/useTradingStore";
 import {
@@ -129,6 +130,13 @@ function formatChartDate(time: Time, timeZone: string): string {
 
 type RsiLinePoint = { time: number; value?: number | null };
 type IndexedLinePoint = LineData<Time> | WhitespaceData<Time>;
+type BollingerBandsLinePoint = {
+  time: number;
+  upper?: number | null;
+  middle?: number | null;
+  lower?: number | null;
+};
+type StochRsiLinePoint = { time: number; k?: number | null; d?: number | null };
 
 type SharedTimeScale = {
   indexToX: (index: number) => number | null;
@@ -197,6 +205,66 @@ function mergeByTime<T extends { time: number }>(
   return Array.from(merged.values()).sort((a, b) => a.time - b.time);
 }
 
+function closedSortedCandles(candles: Candle[] | undefined): Candle[] {
+  const deduped = new Map<number, Candle>();
+  candles
+    ?.filter((candle) => candle.is_closed !== false)
+    .forEach((candle) => {
+      deduped.set(candle.time, { ...candle, is_closed: true });
+    });
+
+  return Array.from(deduped.values()).sort((a, b) => a.time - b.time);
+}
+
+function upsertLockedClosedCandle(current: Candle[], candle: Candle): Candle[] {
+  const closed = { ...candle, is_closed: true };
+  const deduped = new Map<number, Candle>();
+  current.forEach((item) => deduped.set(item.time, item));
+  if (deduped.has(closed.time)) return current;
+
+  deduped.set(closed.time, closed);
+
+  return Array.from(deduped.values()).sort((a, b) => a.time - b.time);
+}
+
+function withPreviewCandle(closedCandles: Candle[], preview: Candle | null): Candle[] {
+  const locked = closedSortedCandles(closedCandles);
+  if (!preview || preview.is_closed === true) return locked;
+
+  const lastLockedTime = locked.at(-1)?.time ?? Number.NEGATIVE_INFINITY;
+  if (preview.time <= lastLockedTime) return locked;
+
+  return [...locked, { ...preview, is_closed: false }];
+}
+
+function filterPointsToTimes<T extends { time: number }>(
+  points: T[] | undefined,
+  times: Set<number>,
+): T[] | undefined {
+  if (!points) return undefined;
+  return points
+    .filter((point) => times.has(point.time))
+    .sort((a, b) => a.time - b.time);
+}
+
+function filterRsiDataToClosedTimes(
+  data: Partial<RsiAdvancedResponse>,
+  candles: Candle[],
+): Partial<RsiAdvancedResponse> {
+  const closedTimes = new Set(closedSortedCandles(candles).map((candle) => candle.time));
+
+  return {
+    ...data,
+    rsi: filterPointsToTimes(data.rsi, closedTimes) ?? [],
+    sma_rsi: filterPointsToTimes(data.sma_rsi, closedTimes),
+    ema_rsi: filterPointsToTimes(data.ema_rsi, closedTimes),
+    wma_rsi: filterPointsToTimes(data.wma_rsi, closedTimes),
+    bollinger_bands: filterPointsToTimes(data.bollinger_bands, closedTimes),
+    stoch_rsi: filterPointsToTimes(data.stoch_rsi, closedTimes),
+    divergences: filterPointsToTimes(data.divergences, closedTimes),
+  };
+}
+
 function latestValue(points: RsiLinePoint[] | undefined): number | null {
   if (!points) return null;
 
@@ -208,6 +276,259 @@ function latestValue(points: RsiLinePoint[] | undefined): number | null {
   }
 
   return null;
+}
+
+function candleSourceValue(candle: Candle, source: string): number {
+  switch (source) {
+    case "open":
+      return candle.open;
+    case "high":
+      return candle.high;
+    case "low":
+      return candle.low;
+    case "hl2":
+      return (candle.high + candle.low) / 2;
+    case "hlc3":
+      return (candle.high + candle.low + candle.close) / 3;
+    case "ohlc4":
+      return (candle.open + candle.high + candle.low + candle.close) / 4;
+    case "close":
+    default:
+      return candle.close;
+  }
+}
+
+function calculatePreviewRsiValues(
+  candles: Candle[],
+  period: number,
+  source: string,
+): Array<number | null> {
+  const prices = candles.map((candle) => candleSourceValue(candle, source));
+  const result: Array<number | null> = Array(prices.length).fill(null);
+
+  if (prices.length < period + 1) return result;
+
+  const gains: number[] = [];
+  const losses: number[] = [];
+  for (let index = 1; index < prices.length; index += 1) {
+    const delta = prices[index] - prices[index - 1];
+    gains.push(Math.max(delta, 0));
+    losses.push(Math.abs(Math.min(delta, 0)));
+  }
+
+  let avgGain = gains.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+
+  const compute = (gain: number, loss: number) => {
+    if (gain === 0 && loss === 0) return 50;
+    if (loss === 0) return 100;
+    const rs = gain / loss;
+    return 100 - 100 / (1 + rs);
+  };
+
+  result[period] = compute(avgGain, avgLoss);
+
+  for (let index = period + 1; index < prices.length; index += 1) {
+    const gain = gains[index - 1];
+    const loss = losses[index - 1];
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    result[index] = compute(avgGain, avgLoss);
+  }
+
+  return result;
+}
+
+function calculatePreviewRsiMaValues(
+  rsiValues: Array<number | null>,
+  period: number,
+  maType: "sma" | "ema" | "wma",
+): Array<number | null> {
+  const result: Array<number | null> = Array(rsiValues.length).fill(null);
+  const valid = rsiValues
+    .map((value, index) => ({ value, index }))
+    .filter((point): point is { value: number; index: number } => point.value !== null);
+
+  if (valid.length < period) return result;
+
+  const values = valid.map((point) => point.value);
+  const maValues: Array<number | null> = Array(values.length).fill(null);
+
+  if (maType === "sma") {
+    for (let index = period - 1; index < values.length; index += 1) {
+      const window = values.slice(index - period + 1, index + 1);
+      maValues[index] = window.reduce((sum, value) => sum + value, 0) / period;
+    }
+  } else if (maType === "ema") {
+    const multiplier = 2 / (period + 1);
+    let ema = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+    maValues[period - 1] = ema;
+    for (let index = period; index < values.length; index += 1) {
+      ema = values[index] * multiplier + ema * (1 - multiplier);
+      maValues[index] = ema;
+    }
+  } else {
+    const weights = Array.from({ length: period }, (_, index) => index + 1);
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+    for (let index = period - 1; index < values.length; index += 1) {
+      const window = values.slice(index - period + 1, index + 1);
+      maValues[index] =
+        window.reduce((sum, value, weightIndex) => sum + value * weights[weightIndex], 0) /
+        totalWeight;
+    }
+  }
+
+  valid.forEach((point, index) => {
+    result[point.index] = maValues[index];
+  });
+
+  return result;
+}
+
+function calculatePreviewBollingerPoint(
+  rsiValues: Array<number | null>,
+  time: number,
+  period = 20,
+  stdDev = 2,
+): BollingerBandsLinePoint {
+  const valid = rsiValues.filter((value): value is number => value !== null);
+  if (valid.length < period) return { time, upper: null, middle: null, lower: null };
+
+  const window = valid.slice(-period);
+  const middle = window.reduce((sum, value) => sum + value, 0) / period;
+  const variance = window.reduce((sum, value) => sum + (value - middle) ** 2, 0) / period;
+  const deviation = Math.sqrt(variance);
+
+  return {
+    time,
+    upper: middle + stdDev * deviation,
+    middle,
+    lower: middle - stdDev * deviation,
+  };
+}
+
+function calculatePreviewStochPoint(
+  rsiValues: Array<number | null>,
+  time: number,
+  period = 14,
+  smoothK = 3,
+  smoothD = 3,
+): StochRsiLinePoint {
+  const valid = rsiValues.filter((value): value is number => value !== null);
+  if (valid.length < period + smoothK + smoothD - 2) return { time, k: null, d: null };
+
+  const rawK: Array<number | null> = Array(valid.length).fill(null);
+  for (let index = period - 1; index < valid.length; index += 1) {
+    const window = valid.slice(index - period + 1, index + 1);
+    const low = Math.min(...window);
+    const high = Math.max(...window);
+    rawK[index] = high === low ? 50 : (100 * (valid[index] - low)) / (high - low);
+  }
+
+  const smoothedK: Array<number | null> = Array(valid.length).fill(null);
+  for (let index = period + smoothK - 2; index < valid.length; index += 1) {
+    const window = rawK
+      .slice(index - smoothK + 1, index + 1)
+      .filter((value): value is number => value !== null);
+    if (window.length === smoothK) {
+      smoothedK[index] = window.reduce((sum, value) => sum + value, 0) / smoothK;
+    }
+  }
+
+  const smoothedD: Array<number | null> = Array(valid.length).fill(null);
+  for (let index = period + smoothK + smoothD - 3; index < valid.length; index += 1) {
+    const window = smoothedK
+      .slice(index - smoothD + 1, index + 1)
+      .filter((value): value is number => value !== null);
+    if (window.length === smoothD) {
+      smoothedD[index] = window.reduce((sum, value) => sum + value, 0) / smoothD;
+    }
+  }
+
+  return {
+    time,
+    k: smoothedK[smoothedK.length - 1],
+    d: smoothedD[smoothedD.length - 1],
+  };
+}
+
+function appendPreviewPoint<T extends { time: number }>(
+  locked: T[] | undefined,
+  preview: T,
+): T[] {
+  const withoutPreviewTime = (locked ?? []).filter((point) => point.time !== preview.time);
+  return [...withoutPreviewTime, preview].sort((a, b) => a.time - b.time);
+}
+
+function buildPreviewRsiData(
+  lockedData: Partial<RsiAdvancedResponse>,
+  renderCandles: Candle[],
+  previewCandle: Candle | null,
+  options: {
+    period: number;
+    source: string;
+    smaPeriod: number;
+    includeSma: boolean;
+    emaPeriod: number;
+    includeEma: boolean;
+    wmaPeriod: number;
+    includeWma: boolean;
+    includeBb: boolean;
+    includeStochRsi: boolean;
+  },
+): Partial<RsiAdvancedResponse> {
+  if (!previewCandle || previewCandle.is_closed === true) return lockedData;
+  if (renderCandles.at(-1)?.time !== previewCandle.time) return lockedData;
+
+  const rsiValues = calculatePreviewRsiValues(renderCandles, options.period, options.source);
+  const previewIndex = renderCandles.length - 1;
+  const previewTime = previewCandle.time;
+  const previewRsi = rsiValues[previewIndex];
+
+  const nextData: Partial<RsiAdvancedResponse> = {
+    ...lockedData,
+    rsi: appendPreviewPoint(lockedData.rsi, { time: previewTime, value: previewRsi }),
+  };
+
+  if (options.includeSma) {
+    const values = calculatePreviewRsiMaValues(rsiValues, options.smaPeriod, "sma");
+    nextData.sma_rsi = appendPreviewPoint(lockedData.sma_rsi, {
+      time: previewTime,
+      value: values[previewIndex],
+    });
+  }
+
+  if (options.includeEma) {
+    const values = calculatePreviewRsiMaValues(rsiValues, options.emaPeriod, "ema");
+    nextData.ema_rsi = appendPreviewPoint(lockedData.ema_rsi, {
+      time: previewTime,
+      value: values[previewIndex],
+    });
+  }
+
+  if (options.includeWma) {
+    const values = calculatePreviewRsiMaValues(rsiValues, options.wmaPeriod, "wma");
+    nextData.wma_rsi = appendPreviewPoint(lockedData.wma_rsi, {
+      time: previewTime,
+      value: values[previewIndex],
+    });
+  }
+
+  if (options.includeBb) {
+    nextData.bollinger_bands = appendPreviewPoint(
+      lockedData.bollinger_bands,
+      calculatePreviewBollingerPoint(rsiValues, previewTime),
+    );
+  }
+
+  if (options.includeStochRsi) {
+    nextData.stoch_rsi = appendPreviewPoint(
+      lockedData.stoch_rsi,
+      calculatePreviewStochPoint(rsiValues, previewTime),
+    );
+  }
+
+  return nextData;
 }
 
 type HoveredRsiValues = {
@@ -282,10 +603,12 @@ export default function ChartWidget() {
   const [hoveredRsiValues, setHoveredRsiValues] =
     useState<HoveredRsiValues | null>(null);
   const [allCandles, setAllCandles] = useState<Candle[]>([]);
+  const [previewCandle, setPreviewCandle] = useState<Candle | null>(null);
   const [allRsiData, setAllRsiData] = useState<Partial<RsiAdvancedResponse>>({
     rsi: [],
   });
   const historyFetchRef = useRef<AbortController | null>(null);
+  const lockedCandlesRef = useRef<Candle[]>([]);
   const sortedCandlesRef = useRef<Candle[]>([]);
   const sortedCandleTimesRef = useRef<number[]>([]);
   const lastFetchEarliestRef = useRef<number | null>(null);
@@ -368,6 +691,46 @@ export default function ChartWidget() {
   );
 
   const { lastCandle } = useWebsocket(symbol, interval);
+
+  const renderCandles = useMemo(
+    () => withPreviewCandle(allCandles, previewCandle),
+    [allCandles, previewCandle],
+  );
+
+  const visibleRsiData = useMemo(
+    () =>
+      buildPreviewRsiData(allRsiData, renderCandles, previewCandle, {
+        period: rsiPeriod,
+        source: rsiSource,
+        includeSma: smaMa.show,
+        smaPeriod: smaMa.period,
+        includeEma: emaMa.show,
+        emaPeriod: emaMa.period,
+        includeWma: wmaMa.show,
+        wmaPeriod: wmaMa.period,
+        includeBb: showRsiBb,
+        includeStochRsi: showStochRsi,
+      }),
+    [
+      allRsiData,
+      renderCandles,
+      previewCandle,
+      rsiPeriod,
+      rsiSource,
+      smaMa.show,
+      smaMa.period,
+      emaMa.show,
+      emaMa.period,
+      wmaMa.show,
+      wmaMa.period,
+      showRsiBb,
+      showStochRsi,
+    ],
+  );
+
+  useEffect(() => {
+    lockedCandlesRef.current = allCandles;
+  }, [allCandles]);
 
   const chartTimeZoneLabel = useMemo(
     () => getTimeZoneAbbreviation(chartTimeZone),
@@ -468,27 +831,27 @@ export default function ChartWidget() {
     [chartOptions, theme],
   );
 
-  const rsiValue = hoveredRsiValues?.rsi ?? latestValue(allRsiData.rsi);
+  const rsiValue = hoveredRsiValues?.rsi ?? latestValue(visibleRsiData.rsi);
   const visibleMaLegends = [
     smaMa.show
       ? {
           label: `SMA ${smaMa.period} RSI`,
           color: smaMa.color,
-          value: hoveredRsiValues?.sma ?? latestValue(allRsiData.sma_rsi),
+          value: hoveredRsiValues?.sma ?? latestValue(visibleRsiData.sma_rsi),
         }
       : null,
     emaMa.show
       ? {
           label: `EMA ${emaMa.period} RSI`,
           color: emaMa.color,
-          value: hoveredRsiValues?.ema ?? latestValue(allRsiData.ema_rsi),
+          value: hoveredRsiValues?.ema ?? latestValue(visibleRsiData.ema_rsi),
         }
       : null,
     wmaMa.show
       ? {
           label: `WMA ${wmaMa.period} RSI`,
           color: wmaMa.color,
-          value: hoveredRsiValues?.wma ?? latestValue(allRsiData.wma_rsi),
+          value: hoveredRsiValues?.wma ?? latestValue(visibleRsiData.wma_rsi),
         }
       : null,
   ].filter(
@@ -629,7 +992,7 @@ export default function ChartWidget() {
     candlestickSeriesRef.current = candlestickSeries;
     timeScaleRef.current = {
       indexToX: (index: number) =>
-        chart.timeScale().logicalToCoordinate(index),
+        chart.timeScale().logicalToCoordinate(index as Logical),
     };
     (window as typeof window & {
       logAlignment?: (index: number) => {
@@ -912,21 +1275,31 @@ export default function ChartWidget() {
   useEffect(() => {
     const key = `${symbol}:${interval}`;
     if (candlesData?.candles && seedKeyRef.current !== key) {
+      const lockedCandles = closedSortedCandles(candlesData.candles);
       seedKeyRef.current = key;
       initialRangeSetRef.current = false;
-      setAllCandles(candlesData.candles);
+      setAllCandles(lockedCandles);
+      setPreviewCandle(null);
       lastFetchEarliestRef.current = null;
       lastRsiFetchEarliestRef.current = null;
     }
     if (rsiData && seedKeyRef.current === key) {
-      setAllRsiData(rsiData as Partial<RsiAdvancedResponse>);
+      const lockedCandles = candlesData?.candles
+        ? closedSortedCandles(candlesData.candles)
+        : lockedCandlesRef.current;
+      setAllRsiData(
+        filterRsiDataToClosedTimes(
+          rsiData as Partial<RsiAdvancedResponse>,
+          lockedCandles,
+        ),
+      );
     }
   }, [candlesData, rsiData, symbol, interval]);
 
   // Apply allCandles to the chart series
   useEffect(() => {
-    if (candlestickSeriesRef.current && allCandles.length) {
-      const sortedCandles = [...allCandles].sort((a, b) => a.time - b.time);
+    if (candlestickSeriesRef.current && renderCandles.length) {
+      const sortedCandles = [...renderCandles].sort((a, b) => a.time - b.time);
       sortedCandlesRef.current = sortedCandles;
       sortedCandleTimesRef.current = sortedCandles.map((candle) => candle.time);
 
@@ -971,7 +1344,7 @@ export default function ChartWidget() {
         scheduleSynchronizedRender();
       }
     }
-  }, [allCandles, scheduleSynchronizedRender]);
+  }, [renderCandles, scheduleSynchronizedRender]);
 
   // Lazy-load older candles and RSI when user scrolls to the left edge
   const loadOlderCandles = useCallback(async () => {
@@ -1030,7 +1403,9 @@ export default function ChartWidget() {
       ]);
 
       if (candlesResp.candles && candlesResp.candles.length > 0) {
-        const newCandles = candlesResp.candles.filter((c) => c.time < earliest);
+        const newCandles = closedSortedCandles(candlesResp.candles).filter(
+          (c) => c.time < earliest,
+        );
         if (newCandles.length > 0) {
           setAllCandles((prev) => {
             const existingTimes = new Set(prev.map((candle) => candle.time));
@@ -1129,70 +1504,70 @@ export default function ChartWidget() {
   }, [allCandles, isLoadingHistory, loadOlderCandles]);
 
   useEffect(() => {
-    if (showRsi && rsiSeriesRef.current && allRsiData.rsi) {
+    if (showRsi && rsiSeriesRef.current && visibleRsiData.rsi) {
       const indexedCandles =
         sortedCandlesRef.current.length > 0
           ? sortedCandlesRef.current
-          : [...allCandles].sort((a, b) => a.time - b.time);
+          : [...renderCandles].sort((a, b) => a.time - b.time);
 
       rsiSeriesRef.current.setData(
-        alignLineDataToCandleIndexes(allRsiData.rsi, indexedCandles),
+        alignLineDataToCandleIndexes(visibleRsiData.rsi, indexedCandles),
       );
-      if (smaRsiSeriesRef.current && allRsiData.sma_rsi) {
+      if (smaRsiSeriesRef.current && visibleRsiData.sma_rsi) {
         smaRsiSeriesRef.current.setData(
-          alignLineDataToCandleIndexes(allRsiData.sma_rsi, indexedCandles),
+          alignLineDataToCandleIndexes(visibleRsiData.sma_rsi, indexedCandles),
         );
       }
-      if (emaRsiSeriesRef.current && allRsiData.ema_rsi) {
+      if (emaRsiSeriesRef.current && visibleRsiData.ema_rsi) {
         emaRsiSeriesRef.current.setData(
-          alignLineDataToCandleIndexes(allRsiData.ema_rsi, indexedCandles),
+          alignLineDataToCandleIndexes(visibleRsiData.ema_rsi, indexedCandles),
         );
       }
-      if (wmaRsiSeriesRef.current && allRsiData.wma_rsi) {
+      if (wmaRsiSeriesRef.current && visibleRsiData.wma_rsi) {
         wmaRsiSeriesRef.current.setData(
-          alignLineDataToCandleIndexes(allRsiData.wma_rsi, indexedCandles),
+          alignLineDataToCandleIndexes(visibleRsiData.wma_rsi, indexedCandles),
         );
       }
-      if (bbUpperSeriesRef.current && allRsiData.bollinger_bands) {
+      if (bbUpperSeriesRef.current && visibleRsiData.bollinger_bands) {
         bbUpperSeriesRef.current.setData(
           alignFieldDataToCandleIndexes(
-            allRsiData.bollinger_bands,
+            visibleRsiData.bollinger_bands,
             "upper",
             indexedCandles,
           ),
         );
       }
-      if (bbMiddleSeriesRef.current && allRsiData.bollinger_bands) {
+      if (bbMiddleSeriesRef.current && visibleRsiData.bollinger_bands) {
         bbMiddleSeriesRef.current.setData(
           alignFieldDataToCandleIndexes(
-            allRsiData.bollinger_bands,
+            visibleRsiData.bollinger_bands,
             "middle",
             indexedCandles,
           ),
         );
       }
-      if (bbLowerSeriesRef.current && allRsiData.bollinger_bands) {
+      if (bbLowerSeriesRef.current && visibleRsiData.bollinger_bands) {
         bbLowerSeriesRef.current.setData(
           alignFieldDataToCandleIndexes(
-            allRsiData.bollinger_bands,
+            visibleRsiData.bollinger_bands,
             "lower",
             indexedCandles,
           ),
         );
       }
-      if (stochKSeriesRef.current && allRsiData.stoch_rsi) {
+      if (stochKSeriesRef.current && visibleRsiData.stoch_rsi) {
         stochKSeriesRef.current.setData(
           alignFieldDataToCandleIndexes(
-            allRsiData.stoch_rsi,
+            visibleRsiData.stoch_rsi,
             "k",
             indexedCandles,
           ),
         );
       }
-      if (stochDSeriesRef.current && allRsiData.stoch_rsi) {
+      if (stochDSeriesRef.current && visibleRsiData.stoch_rsi) {
         stochDSeriesRef.current.setData(
           alignFieldDataToCandleIndexes(
-            allRsiData.stoch_rsi,
+            visibleRsiData.stoch_rsi,
             "d",
             indexedCandles,
           ),
@@ -1208,8 +1583,8 @@ export default function ChartWidget() {
     }
   }, [
     showRsi,
-    allRsiData,
-    allCandles,
+    visibleRsiData,
+    renderCandles,
     obLevel,
     osLevel,
     scheduleSynchronizedRender,
@@ -1222,14 +1597,60 @@ export default function ChartWidget() {
 
   useEffect(() => {
     if (lastCandle) {
-      setAllCandles((prev) => {
-        const byTime = new Map<number, Candle>();
-        prev.forEach((candle) => byTime.set(candle.time, candle));
-        byTime.set(lastCandle.time, lastCandle);
-        return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
-      });
+      if (lastCandle.is_closed === true) {
+        setPreviewCandle((current) =>
+          current?.time === lastCandle.time ? null : current,
+        );
+        if (lockedCandlesRef.current.some((candle) => candle.time === lastCandle.time)) {
+          return;
+        }
+
+        const lockedCandles = upsertLockedClosedCandle(
+          lockedCandlesRef.current,
+          lastCandle,
+        );
+        lockedCandlesRef.current = lockedCandles;
+        setAllCandles(lockedCandles);
+        setAllRsiData((current) =>
+          buildPreviewRsiData(
+            current,
+            lockedCandles,
+            { ...lastCandle, is_closed: false },
+            {
+              period: rsiPeriod,
+              source: rsiSource,
+              includeSma: smaMa.show,
+              smaPeriod: smaMa.period,
+              includeEma: emaMa.show,
+              emaPeriod: emaMa.period,
+              includeWma: wmaMa.show,
+              wmaPeriod: wmaMa.period,
+              includeBb: showRsiBb,
+              includeStochRsi: showStochRsi,
+            },
+          ),
+        );
+      } else {
+        const lastLockedTime =
+          lockedCandlesRef.current.at(-1)?.time ?? Number.NEGATIVE_INFINITY;
+        if (lastCandle.time > lastLockedTime) {
+          setPreviewCandle({ ...lastCandle, is_closed: false });
+        }
+      }
     }
-  }, [lastCandle]);
+  }, [
+    lastCandle,
+    rsiPeriod,
+    rsiSource,
+    smaMa.show,
+    smaMa.period,
+    emaMa.show,
+    emaMa.period,
+    wmaMa.show,
+    wmaMa.period,
+    showRsiBb,
+    showStochRsi,
+  ]);
 
   return (
     <div ref={rootRef} className="flex flex-col w-full h-full bg-background">

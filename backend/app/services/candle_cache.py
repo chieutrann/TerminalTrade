@@ -24,7 +24,11 @@ class CandleCache:
         if key not in self._data:
             self._data[key] = OrderedDict()
         bucket = self._data[key]
-        bucket[candle.time] = candle
+        existing = bucket.get(candle.time)
+        if existing and existing.is_closed:
+            return
+
+        bucket[candle.time] = candle.model_copy(deep=True)
         if len(bucket) > MAX_CANDLES_PER_STREAM:
             bucket.popitem(last=False)
 
@@ -39,7 +43,7 @@ class CandleCache:
         key = self._key(symbol, interval)
         self._data[key] = OrderedDict()
         for c in sorted(candles, key=lambda x: x.time):
-            self._data[key][c.time] = c
+            self._data[key][c.time] = c.model_copy(deep=True)
             if len(self._data[key]) > MAX_CANDLES_PER_STREAM:
                 self._data[key].popitem(last=False)
 
