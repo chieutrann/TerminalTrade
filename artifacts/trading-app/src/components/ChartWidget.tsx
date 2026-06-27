@@ -133,6 +133,8 @@ function formatChartDate(time: Time, timeZone: string): string {
 type TimeLabelContext = {
   barSpacing: number;
   visibleBars: number;
+  rangeFrom: number;
+  rangeTo: number;
   version: number;
 };
 
@@ -791,6 +793,36 @@ function getSafeCandleIndex(time: Time, maxLength: number): number | null {
   return index;
 }
 
+function updateLineSeriesLastPoint(
+  series: ISeriesApi<"Line"> | null,
+  data: IndexedLinePoint[] | undefined,
+) {
+  const last = data?.at(-1);
+  if (!series || !last || !("value" in last) || typeof last.value !== "number") {
+    return;
+  }
+
+  series.update(last as LineData<Time>);
+}
+
+function updateBaselineSeriesLastPoint(
+  series: ISeriesApi<"Baseline"> | null,
+  data: IndexedBaselinePoint[] | undefined,
+) {
+  const last = data?.at(-1);
+  if (!series || !last || !("value" in last) || typeof last.value !== "number") {
+    return;
+  }
+
+  series.update(last as BaselineData<Time>);
+}
+
+function candleStructureSignature(candles: Candle[]): string {
+  const first = candles.at(0)?.time ?? "none";
+  const last = candles.at(-1)?.time ?? "none";
+  return `${candles.length}:${first}:${last}`;
+}
+
 export default function ChartWidget() {
   const {
     symbol,
@@ -865,6 +897,8 @@ export default function ChartWidget() {
   const timeLabelContextRef = useRef<TimeLabelContext>({
     barSpacing: 8,
     visibleBars: 80,
+    rangeFrom: 0,
+    rangeTo: 80,
     version: 0,
   });
   const timeLabelBucketsRef = useRef<{
@@ -883,6 +917,9 @@ export default function ChartWidget() {
   const isSyncingCrosshairRef = useRef(false);
   const renderCandlesRef = useRef<Candle[]>([]);
   const visibleRsiDataRef = useRef<Partial<RsiAdvancedResponse>>({ rsi: [] });
+  const priceDataStructureRef = useRef<string>("");
+  const rsiDataStructureRef = useRef<string>("");
+  const lastHistoryLoadAtRef = useRef(0);
 
   const {
     data: candlesData,
@@ -1036,15 +1073,21 @@ export default function ChartWidget() {
 
     const visibleBars = Math.max(1, nextRange.to - nextRange.from);
     const width = Math.max(1, timeScale.width());
+    const barSpacing = width / visibleBars;
     const previous = timeLabelContextRef.current;
+    const zoomChanged =
+      Math.abs(previous.visibleBars - visibleBars) > 0.001 ||
+      Math.abs(previous.barSpacing - barSpacing) > 0.001;
+    const rangeMoved =
+      Math.abs(previous.rangeFrom - nextRange.from) > 0.5 ||
+      Math.abs(previous.rangeTo - nextRange.to) > 0.5;
+
     timeLabelContextRef.current = {
       visibleBars,
-      barSpacing: width / visibleBars,
-      version:
-        Math.abs(previous.visibleBars - visibleBars) > 0.001 ||
-        Math.abs(previous.barSpacing - width / visibleBars) > 0.001
-          ? previous.version + 1
-          : previous.version,
+      barSpacing,
+      rangeFrom: nextRange.from,
+      rangeTo: nextRange.to,
+      version: zoomChanged || rangeMoved ? previous.version + 1 : previous.version,
     };
   }, []);
 
@@ -1927,6 +1970,9 @@ export default function ChartWidget() {
       const lockedCandles = closedSortedCandles(candlesData.candles);
       seedKeyRef.current = key;
       initialRangeSetRef.current = false;
+      priceDataStructureRef.current = "";
+      rsiDataStructureRef.current = "";
+      lastHistoryLoadAtRef.current = 0;
       setAllCandles(lockedCandles);
       setPreviewCandle(null);
       lastFetchEarliestRef.current = null;
@@ -1952,26 +1998,36 @@ export default function ChartWidget() {
       sortedCandlesRef.current = sortedCandles;
       sortedCandleTimesRef.current = sortedCandles.map((candle) => candle.time);
 
-      const formattedData: CandlestickData[] = sortedCandles
-        .map((c, index) => ({
-          time: index as Time,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        }));
-      candlestickSeriesRef.current.setData(formattedData);
-      if (chartRef.current && pendingPrependCountRef.current > 0) {
+      const formattedData: CandlestickData[] = sortedCandles.map((c, index) => ({
+        time: index as Time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+
+      const nextStructure = candleStructureSignature(sortedCandles);
+      const hasPendingPrepend = pendingPrependCountRef.current > 0;
+      const canUpdateLastOnly =
+        priceDataStructureRef.current === nextStructure &&
+        initialRangeSetRef.current &&
+        !hasPendingPrepend;
+
+      if (canUpdateLastOnly) {
+        const latestBar = formattedData.at(-1);
+        if (latestBar) candlestickSeriesRef.current.update(latestBar);
+      } else {
+        candlestickSeriesRef.current.setData(formattedData);
+      }
+      priceDataStructureRef.current = nextStructure;
+
+      if (chartRef.current && hasPendingPrepend) {
         const prependCount = pendingPrependCountRef.current;
         const previousRange = pendingVisibleLogicalRangeRef.current;
         pendingPrependCountRef.current = 0;
         pendingVisibleLogicalRangeRef.current = null;
 
-        if (
-          previousRange &&
-          previousRange.from != null &&
-          previousRange.to != null
-        ) {
+        if (isValidLogicalRange(previousRange)) {
           chartRef.current.timeScale().setVisibleLogicalRange({
             from: previousRange.from + prependCount,
             to: previousRange.to + prependCount,
@@ -2137,11 +2193,18 @@ export default function ChartWidget() {
     const mainTs = chartRef.current.timeScale();
 
     const onScroll = (range: LogicalRange | null) => {
-      if (range && !isLoadingHistory) {
-        if (range.from <= 200) {
-          loadOlderCandles();
-        }
-      }
+      if (!isValidLogicalRange(range)) return;
+
+      const threshold = isCoarsePointer ? 60 : 120;
+      if (range.from > threshold) return;
+      if (isLoadingHistoryRef.current) return;
+
+      const now = Date.now();
+      const cooldownMs = isCoarsePointer ? 1500 : 700;
+      if (now - lastHistoryLoadAtRef.current < cooldownMs) return;
+
+      lastHistoryLoadAtRef.current = now;
+      void loadOlderCandles();
     };
 
     mainTs.subscribeVisibleLogicalRangeChange(onScroll);
@@ -2150,7 +2213,7 @@ export default function ChartWidget() {
         mainTs.unsubscribeVisibleLogicalRangeChange(onScroll);
       } catch {}
     };
-  }, [allCandles, isLoadingHistory, loadOlderCandles]);
+  }, [allCandles, isCoarsePointer, loadOlderCandles]);
 
   useEffect(() => {
     if (showRsi && rsiSeriesRef.current && visibleRsiData.rsi) {
@@ -2166,76 +2229,62 @@ export default function ChartWidget() {
         visibleRsiData.rsi,
         indexedCandles,
       );
+      const smaLineData = visibleRsiData.sma_rsi
+        ? alignLineDataToCandleIndexes(visibleRsiData.sma_rsi, indexedCandles)
+        : undefined;
+      const emaLineData = visibleRsiData.ema_rsi
+        ? alignLineDataToCandleIndexes(visibleRsiData.ema_rsi, indexedCandles)
+        : undefined;
+      const wmaLineData = visibleRsiData.wma_rsi
+        ? alignLineDataToCandleIndexes(visibleRsiData.wma_rsi, indexedCandles)
+        : undefined;
+      const bbUpperData = visibleRsiData.bollinger_bands
+        ? alignFieldDataToCandleIndexes(visibleRsiData.bollinger_bands, "upper", indexedCandles)
+        : undefined;
+      const bbMiddleData = visibleRsiData.bollinger_bands
+        ? alignFieldDataToCandleIndexes(visibleRsiData.bollinger_bands, "middle", indexedCandles)
+        : undefined;
+      const bbLowerData = visibleRsiData.bollinger_bands
+        ? alignFieldDataToCandleIndexes(visibleRsiData.bollinger_bands, "lower", indexedCandles)
+        : undefined;
+      const stochKData = visibleRsiData.stoch_rsi
+        ? alignFieldDataToCandleIndexes(visibleRsiData.stoch_rsi, "k", indexedCandles)
+        : undefined;
+      const stochDData = visibleRsiData.stoch_rsi
+        ? alignFieldDataToCandleIndexes(visibleRsiData.stoch_rsi, "d", indexedCandles)
+        : undefined;
+      const nextStructure = `${candleStructureSignature(indexedCandles)}:${obLevel}:${osLevel}:${smaMa.show}:${emaMa.show}:${wmaMa.show}:${showRsiBb}:${showStochRsi}`;
+      const canUpdateLastOnly = rsiDataStructureRef.current === nextStructure;
 
-      rsiOverboughtFillSeriesRef.current?.setData(rsiBaselineData);
-      rsiOversoldFillSeriesRef.current?.setData(rsiBaselineData);
-      rsiSeriesRef.current.setData(rsiLineData);
-      if (smaRsiSeriesRef.current && visibleRsiData.sma_rsi) {
-        smaRsiSeriesRef.current.setData(
-          alignLineDataToCandleIndexes(visibleRsiData.sma_rsi, indexedCandles),
-        );
+      if (canUpdateLastOnly) {
+        updateBaselineSeriesLastPoint(rsiOverboughtFillSeriesRef.current, rsiBaselineData);
+        updateBaselineSeriesLastPoint(rsiOversoldFillSeriesRef.current, rsiBaselineData);
+        updateLineSeriesLastPoint(rsiSeriesRef.current, rsiLineData);
+        updateLineSeriesLastPoint(smaRsiSeriesRef.current, smaLineData);
+        updateLineSeriesLastPoint(emaRsiSeriesRef.current, emaLineData);
+        updateLineSeriesLastPoint(wmaRsiSeriesRef.current, wmaLineData);
+        updateLineSeriesLastPoint(bbUpperSeriesRef.current, bbUpperData);
+        updateLineSeriesLastPoint(bbMiddleSeriesRef.current, bbMiddleData);
+        updateLineSeriesLastPoint(bbLowerSeriesRef.current, bbLowerData);
+        updateLineSeriesLastPoint(stochKSeriesRef.current, stochKData);
+        updateLineSeriesLastPoint(stochDSeriesRef.current, stochDData);
+      } else {
+        rsiOverboughtFillSeriesRef.current?.setData(rsiBaselineData);
+        rsiOversoldFillSeriesRef.current?.setData(rsiBaselineData);
+        rsiSeriesRef.current.setData(rsiLineData);
+        if (smaRsiSeriesRef.current && smaLineData) smaRsiSeriesRef.current.setData(smaLineData);
+        if (emaRsiSeriesRef.current && emaLineData) emaRsiSeriesRef.current.setData(emaLineData);
+        if (wmaRsiSeriesRef.current && wmaLineData) wmaRsiSeriesRef.current.setData(wmaLineData);
+        if (bbUpperSeriesRef.current && bbUpperData) bbUpperSeriesRef.current.setData(bbUpperData);
+        if (bbMiddleSeriesRef.current && bbMiddleData) bbMiddleSeriesRef.current.setData(bbMiddleData);
+        if (bbLowerSeriesRef.current && bbLowerData) bbLowerSeriesRef.current.setData(bbLowerData);
+        if (stochKSeriesRef.current && stochKData) stochKSeriesRef.current.setData(stochKData);
+        if (stochDSeriesRef.current && stochDData) stochDSeriesRef.current.setData(stochDData);
+        if (obSeriesRef.current) obSeriesRef.current.setData(makeLevelLineData(obLevel, indexedCandles));
+        if (osSeriesRef.current) osSeriesRef.current.setData(makeLevelLineData(osLevel, indexedCandles));
       }
-      if (emaRsiSeriesRef.current && visibleRsiData.ema_rsi) {
-        emaRsiSeriesRef.current.setData(
-          alignLineDataToCandleIndexes(visibleRsiData.ema_rsi, indexedCandles),
-        );
-      }
-      if (wmaRsiSeriesRef.current && visibleRsiData.wma_rsi) {
-        wmaRsiSeriesRef.current.setData(
-          alignLineDataToCandleIndexes(visibleRsiData.wma_rsi, indexedCandles),
-        );
-      }
-      if (bbUpperSeriesRef.current && visibleRsiData.bollinger_bands) {
-        bbUpperSeriesRef.current.setData(
-          alignFieldDataToCandleIndexes(
-            visibleRsiData.bollinger_bands,
-            "upper",
-            indexedCandles,
-          ),
-        );
-      }
-      if (bbMiddleSeriesRef.current && visibleRsiData.bollinger_bands) {
-        bbMiddleSeriesRef.current.setData(
-          alignFieldDataToCandleIndexes(
-            visibleRsiData.bollinger_bands,
-            "middle",
-            indexedCandles,
-          ),
-        );
-      }
-      if (bbLowerSeriesRef.current && visibleRsiData.bollinger_bands) {
-        bbLowerSeriesRef.current.setData(
-          alignFieldDataToCandleIndexes(
-            visibleRsiData.bollinger_bands,
-            "lower",
-            indexedCandles,
-          ),
-        );
-      }
-      if (stochKSeriesRef.current && visibleRsiData.stoch_rsi) {
-        stochKSeriesRef.current.setData(
-          alignFieldDataToCandleIndexes(
-            visibleRsiData.stoch_rsi,
-            "k",
-            indexedCandles,
-          ),
-        );
-      }
-      if (stochDSeriesRef.current && visibleRsiData.stoch_rsi) {
-        stochDSeriesRef.current.setData(
-          alignFieldDataToCandleIndexes(
-            visibleRsiData.stoch_rsi,
-            "d",
-            indexedCandles,
-          ),
-        );
-      }
-      if (obSeriesRef.current) {
-        obSeriesRef.current.setData(makeLevelLineData(obLevel, indexedCandles));
-      }
-      if (osSeriesRef.current) {
-        osSeriesRef.current.setData(makeLevelLineData(osLevel, indexedCandles));
-      }
+
+      rsiDataStructureRef.current = nextStructure;
       rsiChartRef.current?.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
       scheduleSynchronizedRender();
     }
@@ -2245,6 +2294,11 @@ export default function ChartWidget() {
     renderCandles,
     obLevel,
     osLevel,
+    smaMa.show,
+    emaMa.show,
+    wmaMa.show,
+    showRsiBb,
+    showStochRsi,
     scheduleSynchronizedRender,
   ]);
 
@@ -2344,11 +2398,12 @@ export default function ChartWidget() {
   }, [latestPrice, nowSeconds, renderCandles, showRsi, rsiPanelHeight]);
 
   return (
-    <div ref={rootRef} className="flex flex-col w-full h-full bg-background">
+    <div ref={rootRef} className="relative z-0 flex flex-col w-full h-full bg-background">
       <div className="relative flex-1 min-h-[300px]">
         <div
           ref={chartContainerRef}
-          className="w-full h-full"
+          className="w-full h-full touch-pan-x"
+          style={{ touchAction: "pan-x pan-y" }}
           data-testid="main-chart"
         />
         {latestPrice !== null && currentPriceY !== null && (
@@ -2412,7 +2467,8 @@ export default function ChartWidget() {
         >
           <div
             ref={rsiContainerRef}
-            className="absolute inset-0 z-0"
+            className="absolute inset-0 z-0 touch-pan-x"
+            style={{ touchAction: "pan-x pan-y" }}
             data-testid="rsi-chart"
           />
           <div

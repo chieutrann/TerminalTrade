@@ -442,10 +442,10 @@ export default function TopBar() {
 
   return (
     <>
-    <div className="h-14 shrink-0 border-b border-border bg-card flex items-center justify-between px-3" data-testid="topbar">
+    <div className="relative z-50 h-14 shrink-0 border-b border-border bg-card flex items-center justify-between px-2 sm:px-3" data-testid="topbar">
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <Select value={symbol} onValueChange={setSymbol}>
-          <SelectTrigger className="h-9 w-[126px] shrink-0 border-border bg-secondary/50 font-mono text-sm font-bold shadow-none sm:w-[180px] sm:text-lg" data-testid="select-symbol">
+          <SelectTrigger className="h-9 w-[104px] shrink-0 border-border bg-secondary/50 font-mono text-xs font-bold shadow-none sm:w-[180px] sm:text-lg" data-testid="select-symbol">
             <SelectValue placeholder="Select Symbol" />
           </SelectTrigger>
           <SelectContent>
@@ -456,7 +456,7 @@ export default function TopBar() {
         </Select>
 
         <div
-          className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 font-mono text-xs text-muted-foreground"
+          className="hidden h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 font-mono text-xs text-muted-foreground sm:flex"
           data-testid="data-source-indicator"
           title={`API data source: ${dataSourceLabel}`}
         >
@@ -468,13 +468,14 @@ export default function TopBar() {
         <div
           ref={intervalScrollerRef}
           className="min-w-0 flex-1 cursor-grab touch-pan-x select-none overflow-x-auto overscroll-x-contain scroll-smooth active:cursor-grabbing [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible"
+          style={{ touchAction: 'pan-x', WebkitOverflowScrolling: 'touch' }}
           data-testid="mobile-interval-scroll"
           onPointerDown={startIntervalSwipe}
           onPointerMove={moveIntervalSwipe}
           onPointerUp={endIntervalSwipe}
           onPointerCancel={endIntervalSwipe}
         >
-          <div className="flex w-max min-w-max items-center gap-1">
+          <div className="flex w-max min-w-max items-center gap-1 pr-3">
             {sortedFavoriteIntervals.map((item) => {
               const chartInterval = intervalToChartInterval(item);
               if (!chartInterval) return null;
@@ -511,7 +512,7 @@ export default function TopBar() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="ml-1 h-8 min-w-8 rounded-md border border-border bg-[#131722] px-2 font-mono text-xs text-slate-200 hover:bg-[#1e222d]"
+                  className="ml-1 h-8 min-w-8 shrink-0 rounded-md border border-border bg-[#131722] px-2 font-mono text-xs text-slate-200 hover:bg-[#1e222d]"
                   data-testid="btn-interval-menu"
                   onClick={(event) => {
                     if (shouldSuppressIntervalClick()) {
@@ -643,8 +644,8 @@ export default function TopBar() {
         )}
       </div>
 
-      <div className="ml-2 flex shrink-0 items-center gap-2">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <div className="ml-1 flex shrink-0 items-center gap-1 sm:ml-2 sm:gap-2">
+        <div className="flex items-center gap-1 text-xs text-muted-foreground sm:gap-1.5">
           <span className={`h-2.5 w-2.5 rounded-full ${status === 'connected' ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]' : 'bg-red-500'}`} />
           <span className="hidden capitalize sm:inline">{status}</span>
         </div>
@@ -652,7 +653,7 @@ export default function TopBar() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-9 w-9"
+          className="h-8 w-8 sm:h-9 sm:w-9"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           data-testid="btn-theme-toggle"
         >
