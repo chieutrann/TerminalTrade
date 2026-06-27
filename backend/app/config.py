@@ -1,6 +1,81 @@
 import os
 import re
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """Minimal .env loader so deployments can use env vars without extra deps."""
+    env_paths = (
+        Path(__file__).resolve().parents[2] / ".env",
+        Path(__file__).resolve().parents[1] / ".env",
+    )
+
+    for env_path in env_paths:
+        if not env_path.exists():
+            continue
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+_load_dotenv()
+
+
+def _csv_env(name: str, default: str = "") -> list[str]:
+    return [item.strip() for item in os.environ.get(name, default).split(",") if item.strip()]
+
+
+@dataclass(frozen=True)
+class Settings:
+    app_env: str
+    port: int
+    frontend_origins: tuple[str, ...]
+    allowed_hosts: tuple[str, ...]
+    cors_allow_credentials: bool
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in {"production", "prod"}
+
+
+@lru_cache
+def get_settings() -> Settings:
+    app_env = os.environ.get("APP_ENV", os.environ.get("NODE_ENV", "development")).lower()
+    is_production = app_env in {"production", "prod"}
+    port = int(os.environ.get("PORT", os.environ.get("BACKEND_PORT", "8080")))
+    origins = tuple(_csv_env("FRONTEND_ORIGINS", ""))
+    allowed_hosts = tuple(_csv_env("ALLOWED_HOSTS", ""))
+    cors_allow_credentials = os.environ.get("CORS_ALLOW_CREDENTIALS", "true").lower() == "true"
+
+    if is_production and not origins:
+        raise RuntimeError("FRONTEND_ORIGINS must be set in production")
+    if is_production and "*" in origins:
+        raise RuntimeError("FRONTEND_ORIGINS cannot use '*' in production")
+
+    return Settings(
+        app_env=app_env,
+        port=port,
+        frontend_origins=origins,
+        allowed_hosts=allowed_hosts,
+        cors_allow_credentials=cors_allow_credentials,
+    )
+
+
+def is_origin_allowed(origin: str | None) -> bool:
+    settings = get_settings()
+    if not origin:
+        return not settings.is_production
+    if "*" in settings.frontend_origins:
+        return not settings.is_production
+    return origin in settings.frontend_origins
 
 SUPPORTED_SYMBOLS = [
     "BTC/USD",
@@ -27,11 +102,11 @@ class IntervalConfig:
     label: str
     bucket_ms: int
 
-COINBASE_WS_URL = "wss://ws-feed.exchange.coinbase.com"
-COINBASE_REST_URL = "https://api.exchange.coinbase.com"
+COINBASE_WS_URL = os.environ.get("COINBASE_WS_URL", "wss://ws-feed.exchange.coinbase.com")
+COINBASE_REST_URL = os.environ.get("COINBASE_REST_URL", "https://api.exchange.coinbase.com")
 
-BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
-BINANCE_REST_URL = "https://api.binance.com"
+BINANCE_WS_URL = os.environ.get("BINANCE_WS_URL", "wss://stream.binance.com:9443/ws")
+BINANCE_REST_URL = os.environ.get("BINANCE_REST_URL", "https://api.binance.com")
 
 COINBASE_USD_SYMBOLS = {"BTC/USD": "BTC-USD", "ETH/USD": "ETH-USD"}
 BINANCE_SYMBOLS = {

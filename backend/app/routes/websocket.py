@@ -5,7 +5,7 @@ import logging
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.config import INTERVAL_PATTERN, validate_symbol, parse_interval_seconds
+from app.config import INTERVAL_PATTERN, is_origin_allowed, validate_symbol, parse_interval_seconds
 from app.models.candle import Candle
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,12 @@ router = APIRouter()
 
 @router.websocket("/ws/candles")
 async def websocket_candles(websocket: WebSocket) -> None:
+    origin = websocket.headers.get("origin")
+    if not is_origin_allowed(origin):
+        logger.warning("Rejected WS connection from origin: %s", origin)
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     manager = websocket.app.state.exchange_manager
 
