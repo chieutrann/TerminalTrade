@@ -1097,8 +1097,9 @@ export default function ChartWidget() {
       options?: { includeDate?: boolean; includeSeconds?: boolean },
     ): string => {
       const index = getSafeCandleIndex(time, sortedCandleTimesRef.current.length);
+      const numericIndex = index ?? -1;
       const timestamp =
-        index !== null ? sortedCandleTimesRef.current[index] : undefined;
+        numericIndex >= 0 ? sortedCandleTimesRef.current[numericIndex] : undefined;
 
       if (timestamp === undefined) return "";
       if (!options) {
@@ -1113,7 +1114,7 @@ export default function ChartWidget() {
         return formatDynamicChartTick({
           timestamp,
           previousTimestamp:
-            index > 0 ? sortedCandleTimesRef.current[index - 1] : undefined,
+            numericIndex > 0 ? sortedCandleTimesRef.current[numericIndex - 1] : undefined,
           timeZone: chartTimeZone,
           intervalSeconds: intervalSecondsForLabels,
           context,
