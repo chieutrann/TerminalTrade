@@ -11,12 +11,14 @@ import {
   createChart,
   CandlestickSeries,
   LineSeries,
+  BaselineSeries,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
   type Time,
   type CandlestickData,
   type LineData,
+  type BaselineData,
   type WhitespaceData,
   type LogicalRange,
   type Logical,
@@ -185,6 +187,7 @@ function formatPriceLabel(price: number): string {
 
 type RsiLinePoint = { time: number; value?: number | null };
 type IndexedLinePoint = LineData<Time> | WhitespaceData<Time>;
+type IndexedBaselinePoint = BaselineData<Time> | WhitespaceData<Time>;
 type BollingerBandsLinePoint = {
   time: number;
   upper?: number | null;
@@ -214,6 +217,13 @@ function alignLineDataToCandleIndexes(
 
     return { time: index as Time, value } as LineData<Time>;
   });
+}
+
+function alignBaselineDataToCandleIndexes(
+  points: RsiLinePoint[] | undefined,
+  candles: Candle[],
+): IndexedBaselinePoint[] {
+  return alignLineDataToCandleIndexes(points, candles) as IndexedBaselinePoint[];
 }
 
 function makeLevelLineData(
@@ -641,6 +651,8 @@ export default function ChartWidget() {
   const timeScaleRef = useRef<SharedTimeScale | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const rsiBandOverlayRef = useRef<HTMLDivElement>(null);
+  const rsiOverboughtFillSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const rsiOversoldFillSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const smaRsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const emaRsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -1181,6 +1193,36 @@ export default function ChartWidget() {
 
     const chart = createChart(rsiContainerRef.current, rsiChartOptions);
 
+    const overboughtFillSeries = chart.addSeries(BaselineSeries, {
+      baseValue: { type: "price", price: obLevel },
+      topFillColor1:
+        theme === "dark" ? "rgba(34, 197, 94, 0.26)" : "rgba(22, 163, 74, 0.22)",
+      topFillColor2: "rgba(34, 197, 94, 0.2)",
+      topLineColor: "rgba(34, 197, 94, 0)",
+      bottomFillColor1: "rgba(34, 197, 94, 0)",
+      bottomFillColor2: "rgba(34, 197, 94, 0)",
+      bottomLineColor: "rgba(34, 197, 94, 0)",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      autoscaleInfoProvider: fixedRsiAutoscale,
+    });
+
+    const oversoldFillSeries = chart.addSeries(BaselineSeries, {
+      baseValue: { type: "price", price: osLevel },
+      topFillColor1: "rgba(239, 68, 68, 0)",
+      topFillColor2: "rgba(239, 68, 68, 0)",
+      topLineColor: "rgba(239, 68, 68, 0)",
+      bottomFillColor1:
+        theme === "dark" ? "rgba(239, 68, 68, 0.26)" : "rgba(220, 38, 38, 0.22)",
+      bottomFillColor2: "rgba(239, 68, 68, 0)",
+      bottomLineColor: "rgba(239, 68, 68, 0)",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      autoscaleInfoProvider: fixedRsiAutoscale,
+    });
+
     const rsiSeries = chart.addSeries(LineSeries, {
       color: "#a855f7",
       lineWidth: rsiLineWidth,
@@ -1293,6 +1335,8 @@ export default function ChartWidget() {
     });
 
     rsiChartRef.current = chart;
+    rsiOverboughtFillSeriesRef.current = overboughtFillSeries;
+    rsiOversoldFillSeriesRef.current = oversoldFillSeries;
     rsiSeriesRef.current = rsiSeries;
     smaRsiSeriesRef.current = smaRsiSeries;
     emaRsiSeriesRef.current = emaRsiSeries;
@@ -1385,6 +1429,8 @@ export default function ChartWidget() {
       window.removeEventListener("resize", handleResize);
       chart.remove();
       rsiChartRef.current = null;
+      rsiOverboughtFillSeriesRef.current = null;
+      rsiOversoldFillSeriesRef.current = null;
       rsiSeriesRef.current = null;
       smaRsiSeriesRef.current = null;
       emaRsiSeriesRef.current = null;
@@ -1418,6 +1464,8 @@ export default function ChartWidget() {
     wmaMa.showValue,
     showRsiBb,
     showStochRsi,
+    obLevel,
+    osLevel,
     syncRsiLogicalRange,
     scheduleSynchronizedRender,
     updateRsiBandOverlay,
@@ -1673,10 +1721,18 @@ export default function ChartWidget() {
         sortedCandlesRef.current.length > 0
           ? sortedCandlesRef.current
           : [...renderCandles].sort((a, b) => a.time - b.time);
-
-      rsiSeriesRef.current.setData(
-        alignLineDataToCandleIndexes(visibleRsiData.rsi, indexedCandles),
+      const rsiLineData = alignLineDataToCandleIndexes(
+        visibleRsiData.rsi,
+        indexedCandles,
       );
+      const rsiBaselineData = alignBaselineDataToCandleIndexes(
+        visibleRsiData.rsi,
+        indexedCandles,
+      );
+
+      rsiOverboughtFillSeriesRef.current?.setData(rsiBaselineData);
+      rsiOversoldFillSeriesRef.current?.setData(rsiBaselineData);
+      rsiSeriesRef.current.setData(rsiLineData);
       if (smaRsiSeriesRef.current && visibleRsiData.sma_rsi) {
         smaRsiSeriesRef.current.setData(
           alignLineDataToCandleIndexes(visibleRsiData.sma_rsi, indexedCandles),
