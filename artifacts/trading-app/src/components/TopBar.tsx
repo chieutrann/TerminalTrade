@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTradingStore } from '../store/useTradingStore';
 import { useGetSymbols, getGetSymbolsQueryKey } from '@workspace/api-client-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -269,6 +269,14 @@ export default function TopBar() {
   const [customIntervalDialogOpen, setCustomIntervalDialogOpen] = useState(false);
   const [customIntervalType, setCustomIntervalType] = useState<CustomIntervalUnit>('m');
   const [customIntervalValue, setCustomIntervalValue] = useState('');
+  const intervalScrollerRef = useRef<HTMLDivElement>(null);
+  const intervalSwipeRef = useRef({
+    pointerId: null as number | null,
+    startX: 0,
+    scrollLeft: 0,
+    didSwipe: false,
+    suppressClickUntil: 0,
+  });
   const chartTimeZoneLabel = useMemo(() => getTimeZoneAbbreviation(chartTimeZone), [chartTimeZone]);
   const secondsSupported = useMemo(() => supportsSecondIntervals(symbol), [symbol]);
   const ticksSupported = useMemo(() => supportsTickIntervals(), []);
@@ -325,6 +333,20 @@ export default function TopBar() {
     return () => window.clearInterval(timerId);
   }, []);
 
+  useEffect(() => {
+    const scroller = intervalScrollerRef.current;
+    if (!scroller) return;
+
+    const activeButton = scroller.querySelector<HTMLElement>('[data-active-interval="true"]');
+    if (!activeButton) return;
+
+    activeButton.scrollIntoView({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'center',
+    });
+  }, [interval, sortedFavoriteIntervals]);
+
   const customIntervalCandidate = useMemo(() => {
     const value = customIntervalValue.trim();
     if (!/^[1-9][0-9]*$/.test(value)) return null;
@@ -370,6 +392,54 @@ export default function TopBar() {
   const changePercent = lastCandle && lastCandle.open !== 0 ? (change! / lastCandle.open) * 100 : null;
   const isUp = (change ?? 0) >= 0;
 
+  const startIntervalSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const scroller = intervalScrollerRef.current;
+    if (!scroller) return;
+
+    intervalSwipeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: scroller.scrollLeft,
+      didSwipe: false,
+      suppressClickUntil: 0,
+    };
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const moveIntervalSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const scroller = intervalScrollerRef.current;
+    const swipe = intervalSwipeRef.current;
+
+    if (!scroller || swipe.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - swipe.startX;
+
+    if (Math.abs(deltaX) > 6) {
+      swipe.didSwipe = true;
+      swipe.suppressClickUntil = Date.now() + 250;
+      scroller.scrollLeft = swipe.scrollLeft - deltaX;
+      event.preventDefault();
+    }
+  };
+
+  const endIntervalSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    const swipe = intervalSwipeRef.current;
+    if (swipe.pointerId !== event.pointerId) return;
+
+    if (swipe.didSwipe) {
+      swipe.suppressClickUntil = Date.now() + 250;
+    }
+
+    swipe.pointerId = null;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+  };
+
+  const shouldSuppressIntervalClick = () => {
+    const swipe = intervalSwipeRef.current;
+    return swipe.didSwipe || Date.now() < swipe.suppressClickUntil;
+  };
+
   return (
     <>
     <div className="h-14 shrink-0 border-b border-border bg-card flex items-center justify-between px-3" data-testid="topbar">
@@ -395,8 +465,16 @@ export default function TopBar() {
           <span className="font-semibold text-foreground">{dataSourceLabel}</span>
         </div>
 
-        <div className="min-w-0 flex-1 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-1">
+        <div
+          ref={intervalScrollerRef}
+          className="min-w-0 flex-1 cursor-grab touch-pan-x select-none overflow-x-auto overscroll-x-contain scroll-smooth active:cursor-grabbing [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:overflow-visible"
+          data-testid="mobile-interval-scroll"
+          onPointerDown={startIntervalSwipe}
+          onPointerMove={moveIntervalSwipe}
+          onPointerUp={endIntervalSwipe}
+          onPointerCancel={endIntervalSwipe}
+        >
+          <div className="flex w-max min-w-max items-center gap-1">
             {sortedFavoriteIntervals.map((item) => {
               const chartInterval = intervalToChartInterval(item);
               if (!chartInterval) return null;
@@ -407,12 +485,20 @@ export default function TopBar() {
                   key={intervalKey}
                   variant="ghost"
                   size="sm"
-                  className={`h-8 min-w-9 rounded-md px-2.5 font-mono text-xs ${
+                  data-active-interval={active ? 'true' : undefined}
+                  className={`h-8 min-w-9 shrink-0 rounded-md px-2.5 font-mono text-xs ${
                     active
                       ? 'bg-primary text-primary-foreground shadow-[0_0_18px_rgba(139,92,246,0.45)]'
                       : 'text-muted-foreground hover:bg-secondary'
                   }`}
-                  onClick={() => setInterval(chartInterval)}
+                  onClick={(event) => {
+                    if (shouldSuppressIntervalClick()) {
+                      event.preventDefault();
+                      return;
+                    }
+
+                    setInterval(chartInterval);
+                  }}
                   data-testid={`btn-interval-${intervalKey}`}
                 >
                   {formatIntervalButton(intervalKey)}
@@ -427,6 +513,12 @@ export default function TopBar() {
                   size="sm"
                   className="ml-1 h-8 min-w-8 rounded-md border border-border bg-[#131722] px-2 font-mono text-xs text-slate-200 hover:bg-[#1e222d]"
                   data-testid="btn-interval-menu"
+                  onClick={(event) => {
+                    if (shouldSuppressIntervalClick()) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }
+                  }}
                 >
                   <ChevronDown className="h-4 w-4" />
                 </Button>
@@ -515,7 +607,7 @@ export default function TopBar() {
               {countdownLabel}
             </div>
 
-            <div className="ml-2 flex h-8 items-center overflow-hidden rounded-md border border-border bg-secondary/50 font-mono text-xs">
+            <div className="ml-2 hidden h-8 items-center overflow-hidden rounded-md border border-border bg-secondary/50 font-mono text-xs sm:flex">
               <Select value={chartTimeZone} onValueChange={setChartTimeZone}>
                 <SelectTrigger
                   className="h-8 w-[86px] border-0 bg-transparent px-2 font-mono text-xs shadow-none focus:ring-0"
