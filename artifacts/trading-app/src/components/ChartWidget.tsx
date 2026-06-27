@@ -691,6 +691,7 @@ export default function ChartWidget() {
   const isSyncingLogicalRangeRef = useRef(false);
   const synchronizedRenderFrameRef = useRef<number | null>(null);
   const rsiResizeFrameRef = useRef<number | null>(null);
+  const rsiValueRangeRef = useRef({ from: 0, to: 100 });
   const lastRsiFetchEarliestRef = useRef<number | null>(null);
   const rsiHistoryFetchRef = useRef<AbortController | null>(null);
   const pendingPrependCountRef = useRef(0);
@@ -1092,6 +1093,7 @@ export default function ChartWidget() {
       height: rsiContainerRef.current.clientHeight,
       width: rsiContainerRef.current.clientWidth,
     });
+    rsiChartRef.current.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
     scheduleSynchronizedRender();
   }, [scheduleSynchronizedRender]);
 
@@ -1123,6 +1125,26 @@ export default function ChartWidget() {
       scheduleRsiResizeSync();
     },
     [scheduleRsiResizeSync],
+  );
+
+  const applyRsiValueRange = useCallback(
+    (range: { from: number; to: number }) => {
+      if (!rsiChartRef.current) return;
+
+      const from = Math.min(range.from, range.to);
+      const to = Math.max(range.from, range.to);
+      const span = Math.min(240, Math.max(20, to - from));
+      const midpoint = (from + to) / 2;
+      const nextRange = {
+        from: midpoint - span / 2,
+        to: midpoint + span / 2,
+      };
+
+      rsiValueRangeRef.current = nextRange;
+      rsiChartRef.current.priceScale("right").setVisibleRange(nextRange);
+      scheduleSynchronizedRender();
+    },
+    [scheduleSynchronizedRender],
   );
 
   const startRsiResize = useCallback(
@@ -1177,6 +1199,67 @@ export default function ChartWidget() {
       handle.addEventListener("lostpointercapture", stopResize);
     },
     [applyRsiPanelHeight, syncRsiChartSize, rsiPanelHeight],
+  );
+
+  const startRsiValueScale = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!rsiContainerRef.current) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const handle = event.currentTarget;
+      if (handle.setPointerCapture) {
+        handle.setPointerCapture(event.pointerId);
+      }
+
+      const startY = event.clientY;
+      const startRange = rsiValueRangeRef.current;
+      const startSpan = startRange.to - startRange.from;
+      const midpoint = (startRange.from + startRange.to) / 2;
+      const chartHeight = rsiContainerRef.current.clientHeight || 1;
+      let isDragging = true;
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        if (!isDragging || moveEvent.pointerId !== event.pointerId) return;
+        moveEvent.preventDefault();
+        moveEvent.stopPropagation();
+
+        const deltaY = startY - moveEvent.clientY;
+        const zoomFactor = Math.exp((-deltaY / chartHeight) * 2);
+        const nextSpan = startSpan * zoomFactor;
+        applyRsiValueRange({
+          from: midpoint - nextSpan / 2,
+          to: midpoint + nextSpan / 2,
+        });
+      };
+
+      const stopScale = (upEvent?: PointerEvent) => {
+        if (upEvent && upEvent.pointerId !== event.pointerId) return;
+        if (!isDragging) return;
+
+        isDragging = false;
+        upEvent?.preventDefault();
+        upEvent?.stopPropagation();
+
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", stopScale);
+        window.removeEventListener("pointercancel", stopScale);
+        handle.removeEventListener("lostpointercapture", stopScale);
+
+        if (handle.releasePointerCapture && handle.hasPointerCapture?.(event.pointerId)) {
+          handle.releasePointerCapture(event.pointerId);
+        }
+
+        scheduleSynchronizedRender();
+      };
+
+      window.addEventListener("pointermove", handlePointerMove, { passive: false });
+      window.addEventListener("pointerup", stopScale, { passive: false });
+      window.addEventListener("pointercancel", stopScale, { passive: false });
+      handle.addEventListener("lostpointercapture", stopScale);
+    },
+    [applyRsiValueRange, scheduleSynchronizedRender],
   );
 
   useEffect(() => {
@@ -1401,7 +1484,7 @@ export default function ChartWidget() {
     stochDSeriesRef.current = stochDSeries;
     obSeriesRef.current = obSeries;
     osSeriesRef.current = osSeries;
-    chart.priceScale("right").setVisibleRange({ from: 0, to: 100 });
+    chart.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
 
     let unsubMain: (() => void) | null = null;
 
@@ -1852,6 +1935,7 @@ export default function ChartWidget() {
       if (osSeriesRef.current) {
         osSeriesRef.current.setData(makeLevelLineData(osLevel, indexedCandles));
       }
+      rsiChartRef.current?.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
       scheduleSynchronizedRender();
     }
   }, [
@@ -2039,20 +2123,24 @@ export default function ChartWidget() {
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
-            aria-label="Resize RSI panel from price scale"
-            onPointerDown={startRsiResize}
+            aria-label="Scale RSI values"
+            onPointerDown={startRsiValueScale}
             onKeyDown={(event) => {
               if (event.key === "ArrowUp" || event.key === "ArrowDown") {
                 event.preventDefault();
-                const delta = event.key === "ArrowUp" ? 4 : -4;
-                applyRsiPanelHeight(rsiPanelHeight + delta);
+                const range = rsiValueRangeRef.current;
+                const midpoint = (range.from + range.to) / 2;
+                const span = range.to - range.from;
+                const nextSpan = span * (event.key === "ArrowUp" ? 0.85 : 1.15);
+                applyRsiValueRange({
+                  from: midpoint - nextSpan / 2,
+                  to: midpoint + nextSpan / 2,
+                });
               }
             }}
-            className="absolute bottom-0 right-0 top-8 z-40 flex w-[70px] cursor-ns-resize touch-none select-none items-center justify-center text-muted-foreground/70 md:hidden"
+            className="absolute bottom-0 right-0 top-8 z-40 w-[70px] cursor-ns-resize touch-none select-none bg-transparent"
             style={{ touchAction: "none" }}
-          >
-            <GripHorizontal className="h-4 w-4 rotate-90 rounded-sm bg-background/65 shadow-sm backdrop-blur" />
-          </div>
+          />
           <div
             role="separator"
             tabIndex={0}
