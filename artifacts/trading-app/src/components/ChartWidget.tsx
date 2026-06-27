@@ -621,6 +621,9 @@ export default function ChartWidget() {
   const rsiHistoryFetchRef = useRef<AbortController | null>(null);
   const pendingPrependCountRef = useRef(0);
   const pendingVisibleLogicalRangeRef = useRef<LogicalRange | null>(null);
+  const isSyncingCrosshairRef = useRef(false);
+  const renderCandlesRef = useRef<Candle[]>([]);
+  const visibleRsiDataRef = useRef<Partial<RsiAdvancedResponse>>({ rsi: [] });
 
   const {
     data: candlesData,
@@ -732,6 +735,14 @@ export default function ChartWidget() {
     lockedCandlesRef.current = allCandles;
   }, [allCandles]);
 
+  useEffect(() => {
+    renderCandlesRef.current = renderCandles;
+  }, [renderCandles]);
+
+  useEffect(() => {
+    visibleRsiDataRef.current = visibleRsiData;
+  }, [visibleRsiData]);
+
   const chartTimeZoneLabel = useMemo(
     () => getTimeZoneAbbreviation(chartTimeZone),
     [chartTimeZone],
@@ -783,6 +794,7 @@ export default function ChartWidget() {
       },
       crosshair: { mode: 1 },
       timeScale: {
+        visible: !showRsi,
         timeVisible: true,
         secondsVisible: false,
         barSpacing: 8,
@@ -798,7 +810,13 @@ export default function ChartWidget() {
       handleScroll: true,
       handleScale: true,
     }),
-    [theme, formatIndexedChartTime, formatIndexedChartDate, chartTimeZoneLabel],
+    [
+      theme,
+      showRsi,
+      formatIndexedChartTime,
+      formatIndexedChartDate,
+      chartTimeZoneLabel,
+    ],
   );
 
   const rsiChartOptions = useMemo(
@@ -810,8 +828,8 @@ export default function ChartWidget() {
       },
       timeScale: {
         ...chartOptions.timeScale,
-        visible: false,
-        borderVisible: false,
+        visible: true,
+        borderVisible: true,
       },
       handleScroll: {
         pressedMouseMove: true,
@@ -900,6 +918,64 @@ export default function ChartWidget() {
 
     return payload;
   }, []);
+
+  const clearSyncedCrosshair = useCallback(() => {
+    (chartRef.current as unknown as { clearCrosshairPosition?: () => void })
+      ?.clearCrosshairPosition?.();
+    (rsiChartRef.current as unknown as { clearCrosshairPosition?: () => void })
+      ?.clearCrosshairPosition?.();
+  }, []);
+
+  const syncCrosshairAtIndex = useCallback((index: number, source: "main" | "rsi") => {
+    if (!Number.isFinite(index)) {
+      clearSyncedCrosshair();
+      return;
+    }
+
+    const roundedIndex = Math.round(index);
+    const candle = renderCandlesRef.current[roundedIndex];
+    if (!candle) {
+      clearSyncedCrosshair();
+      return;
+    }
+
+    const time = roundedIndex as Time;
+    const rsiPoint = visibleRsiDataRef.current.rsi?.find(
+      (point) => point.time === candle.time,
+    );
+    const rsiValue =
+      typeof rsiPoint?.value === "number" ? rsiPoint.value : 50;
+
+    isSyncingCrosshairRef.current = true;
+
+    if (source !== "main" && chartRef.current && candlestickSeriesRef.current) {
+      (
+        chartRef.current as unknown as {
+          setCrosshairPosition?: (
+            price: number,
+            horizontalPosition: Time,
+            series: ISeriesApi<"Candlestick">,
+          ) => void;
+        }
+      ).setCrosshairPosition?.(candle.close, time, candlestickSeriesRef.current);
+    }
+
+    if (source !== "rsi" && rsiChartRef.current && rsiSeriesRef.current) {
+      (
+        rsiChartRef.current as unknown as {
+          setCrosshairPosition?: (
+            price: number,
+            horizontalPosition: Time,
+            series: ISeriesApi<"Line">,
+          ) => void;
+        }
+      ).setCrosshairPosition?.(rsiValue, time, rsiSeriesRef.current);
+    }
+
+    window.requestAnimationFrame(() => {
+      isSyncingCrosshairRef.current = false;
+    });
+  }, [clearSyncedCrosshair]);
 
   const syncRsiLogicalRange = useCallback((range?: LogicalRange | null) => {
     if (!chartRef.current || !rsiChartRef.current) return;
@@ -1003,11 +1079,25 @@ export default function ChartWidget() {
       };
     }).logAlignment = logAlignment;
 
+    const onCrosshairMove = (param: MouseEventParams<Time>) => {
+      if (isSyncingCrosshairRef.current) return;
+      if (typeof param.time !== "number") {
+        clearSyncedCrosshair();
+        return;
+      }
+
+      syncCrosshairAtIndex(param.time, "main");
+    };
+    chart.subscribeCrosshairMove(onCrosshairMove);
+
     return () => {
       if (synchronizedRenderFrameRef.current !== null) {
         window.cancelAnimationFrame(synchronizedRenderFrameRef.current);
         synchronizedRenderFrameRef.current = null;
       }
+      try {
+        chart.unsubscribeCrosshairMove(onCrosshairMove);
+      } catch {}
       chart.remove();
       chartRef.current = null;
       timeScaleRef.current = null;
@@ -1015,7 +1105,7 @@ export default function ChartWidget() {
       delete (window as typeof window & { logAlignment?: unknown })
         .logAlignment;
     };
-  }, [chartOptions, logAlignment]);
+  }, [chartOptions, logAlignment, clearSyncedCrosshair, syncCrosshairAtIndex]);
 
   useEffect(() => {
     if (!showRsi || !rsiContainerRef.current) return;
@@ -1187,13 +1277,16 @@ export default function ChartWidget() {
     }
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
+      if (isSyncingCrosshairRef.current) return;
       updateRsiBandOverlay();
 
-      if (!param.time || !param.seriesData.size) {
+      if (typeof param.time !== "number" || !param.seriesData.size) {
         setHoveredRsiValues(null);
+        clearSyncedCrosshair();
         return;
       }
 
+      syncCrosshairAtIndex(param.time, "rsi");
       setHoveredRsiValues({
         rsi: readSeriesValue(param, rsiSeries),
         sma: readSeriesValue(param, smaRsiSeries),
@@ -1259,6 +1352,8 @@ export default function ChartWidget() {
     syncRsiLogicalRange,
     scheduleSynchronizedRender,
     updateRsiBandOverlay,
+    clearSyncedCrosshair,
+    syncCrosshairAtIndex,
   ]);
 
   useLayoutEffect(() => {
@@ -1734,7 +1829,7 @@ export default function ChartWidget() {
           >
             <GripHorizontal className="h-4 w-4" />
           </div>
-          <div className="pointer-events-none absolute left-2 top-6 z-10 text-xs text-muted-foreground">
+          <div className="pointer-events-none absolute left-2 top-12 z-20 text-xs leading-tight text-muted-foreground">
             <div className="space-y-1 rounded-sm bg-background/70 px-1.5 py-1 shadow-sm backdrop-blur">
               <div>
                 <span>

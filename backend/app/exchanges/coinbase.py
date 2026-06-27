@@ -14,7 +14,7 @@ from app.config import (
     COINBASE_WS_URL,
     COINBASE_USD_SYMBOLS,
     COINBASE_GRANULARITY_MAP,
-    parse_interval_seconds,
+    parse_interval_config,
 )
 from app.exchanges.base import BaseExchange, aggregate_candles
 from app.models.candle import Candle
@@ -36,7 +36,7 @@ def _best_coinbase_base(target_seconds: int) -> tuple[int, int]:
     )
     if candidates:
         return candidates[0], candidates[0]
-    return 60, 60
+    raise ValueError(f"No Coinbase historical base interval can build {target_seconds}s candles")
 
 
 class CoinbaseExchange(BaseExchange):
@@ -48,13 +48,14 @@ class CoinbaseExchange(BaseExchange):
     async def fetch_historical_candles(
         self, symbol: str, interval: str, limit: int = 500, before: int | None = None
     ) -> list[Candle]:
-        target_seconds = parse_interval_seconds(interval)
+        interval_config = parse_interval_config(interval)
+        target_seconds = interval_config.seconds
         product_id = _normalize_symbol(symbol)
 
         if target_seconds in NATIVE_COINBASE_SECONDS:
             return await self._fetch_native(product_id, target_seconds, limit, before)
         else:
-            best_secs = max(s for s in COINBASE_GRANULARITY_MAP if s <= target_seconds) if any(s <= target_seconds for s in COINBASE_GRANULARITY_MAP) else 60
+            best_secs, _ = _best_coinbase_base(target_seconds)
             needed = int((limit * target_seconds) / best_secs) + 10
             base_candles = await self._fetch_native(product_id, best_secs, needed, before)
             aggregated = aggregate_candles(base_candles, target_seconds)
@@ -129,7 +130,8 @@ class CoinbaseExchange(BaseExchange):
         interval: str,
         on_candle: Callable[[Candle], None],
     ) -> asyncio.Task:
-        target_seconds = parse_interval_seconds(interval)
+        interval_config = parse_interval_config(interval)
+        target_seconds = interval_config.seconds
         product_id = _normalize_symbol(symbol)
 
         task = asyncio.create_task(

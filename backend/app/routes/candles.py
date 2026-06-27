@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.config import (
     DEFAULT_INTERVALS,
+    default_interval_configs,
     MAX_CANDLES,
     SUPPORTED_SYMBOLS,
     validate_symbol,
@@ -21,6 +22,7 @@ async def get_symbols():
         "symbols": SUPPORTED_SYMBOLS,
         "intervals": DEFAULT_INTERVALS,
         "default_intervals": DEFAULT_INTERVALS,
+        "interval_configs": default_interval_configs(),
     }
 
 

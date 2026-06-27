@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { intervalToChartInterval, normalizeIntervalKey } from '../lib/intervals';
+
+const MAX_FAVORITE_INTERVALS = 10;
 
 export type MaConfig = {
   show: boolean;
@@ -38,6 +41,7 @@ export type ChartProfileData = {
   obLevel: number;
   osLevel: number;
   favoriteIntervals: string[];
+  customIntervals?: string[];
 };
 
 export type ChartProfile = {
@@ -67,6 +71,7 @@ type StoreState = {
   obLevel: number;
   osLevel: number;
   favoriteIntervals: string[];
+  customIntervals: string[];
   profiles: ChartProfile[];
   activeProfileId: string | null;
 
@@ -88,6 +93,8 @@ type StoreState = {
   setObLevel: (l: number) => void;
   setOsLevel: (l: number) => void;
   setFavoriteIntervals: (ints: string[]) => void;
+  addCustomInterval: (interval: string) => void;
+  toggleFavoriteInterval: (interval: string) => void;
   saveProfile: (name: string) => void;
   loadProfile: (id: string) => void;
   deleteProfile: (id: string) => void;
@@ -113,7 +120,19 @@ function createProfileData(state: StoreState): ChartProfileData {
     obLevel: state.obLevel,
     osLevel: state.osLevel,
     favoriteIntervals: [...state.favoriteIntervals],
+    customIntervals: [...state.customIntervals],
   };
+}
+
+function sanitizeIntervalKeys(intervals: string[], limit?: number): string[] {
+  const unique = new Set<string>();
+  intervals.forEach((interval) => {
+    const normalized = normalizeIntervalKey(interval);
+    if (normalized) unique.add(normalized);
+  });
+
+  const result = Array.from(unique);
+  return typeof limit === 'number' ? result.slice(0, limit) : result;
 }
 
 export const useTradingStore = create<StoreState>()(
@@ -136,12 +155,16 @@ export const useTradingStore = create<StoreState>()(
       wmaMa: { ...defaultMaConfig, color: '#22c55e' },
       obLevel: 70,
       osLevel: 30,
-      favoriteIntervals: ['1s', '1m', '5m', '15m', '1h', '4h', '1d'],
+      favoriteIntervals: ['1s', '3s', '10s', '1m', '7m', '15m', '2h', '4h', '1d'],
+      customIntervals: [],
       profiles: [],
       activeProfileId: null,
 
       setSymbol: (symbol) => set({ symbol }),
-      setInterval: (interval) => set({ interval }),
+      setInterval: (interval) => {
+        const normalized = intervalToChartInterval(interval);
+        return normalized ? set({ interval: normalized }) : undefined;
+      },
       setTheme: (theme) => set({ theme }),
       setChartTimeZone: (chartTimeZone) => set({ chartTimeZone }),
       setRsiPeriod: (rsiPeriod) => set({ rsiPeriod }),
@@ -157,7 +180,29 @@ export const useTradingStore = create<StoreState>()(
       setWmaMa: (c) => set((s) => ({ wmaMa: { ...s.wmaMa, ...c } })),
       setObLevel: (obLevel) => set({ obLevel }),
       setOsLevel: (osLevel) => set({ osLevel }),
-      setFavoriteIntervals: (favoriteIntervals) => set({ favoriteIntervals }),
+      setFavoriteIntervals: (favoriteIntervals) =>
+        set({
+          favoriteIntervals: sanitizeIntervalKeys(favoriteIntervals, MAX_FAVORITE_INTERVALS),
+        }),
+      addCustomInterval: (interval) => set((state) => {
+        const normalized = normalizeIntervalKey(interval);
+        if (!normalized) return {};
+        return {
+          customIntervals: sanitizeIntervalKeys([...state.customIntervals, normalized]),
+        };
+      }),
+      toggleFavoriteInterval: (interval) => set((state) => {
+        const normalized = normalizeIntervalKey(interval);
+        if (!normalized) return {};
+
+        const current = sanitizeIntervalKeys(state.favoriteIntervals, MAX_FAVORITE_INTERVALS);
+        const exists = current.includes(normalized);
+        return {
+          favoriteIntervals: exists
+            ? current.filter((item) => item !== normalized)
+            : [...current, normalized].slice(0, MAX_FAVORITE_INTERVALS),
+        };
+      }),
       saveProfile: (rawName) => set((state) => {
         const name = rawName.trim();
         if (!name) return {};
@@ -197,7 +242,13 @@ export const useTradingStore = create<StoreState>()(
           emaMa: { ...profile.data.emaMa },
           wmaMa: { ...profile.data.wmaMa },
           chartTimeZone: profile.data.chartTimeZone ?? state.chartTimeZone ?? 'UTC',
-          favoriteIntervals: [...profile.data.favoriteIntervals],
+          favoriteIntervals: sanitizeIntervalKeys(
+            profile.data.favoriteIntervals,
+            MAX_FAVORITE_INTERVALS,
+          ),
+          customIntervals: sanitizeIntervalKeys(
+            profile.data.customIntervals ?? state.customIntervals ?? [],
+          ),
           activeProfileId: id,
         };
       }),

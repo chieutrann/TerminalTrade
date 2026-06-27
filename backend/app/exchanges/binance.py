@@ -9,7 +9,7 @@ import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed
 
-from app.config import BINANCE_REST_URL, BINANCE_WS_URL, BINANCE_SYMBOLS, BINANCE_INTERVAL_MAP
+from app.config import BINANCE_REST_URL, BINANCE_WS_URL, BINANCE_SYMBOLS, BINANCE_INTERVAL_MAP, parse_interval_config
 from app.exchanges.base import BaseExchange, aggregate_candles
 from app.models.candle import Candle
 
@@ -18,11 +18,6 @@ logger = logging.getLogger(__name__)
 NATIVE_INTERVAL_SECONDS = set(BINANCE_INTERVAL_MAP.keys())
 
 BINANCE_STR_TO_SECONDS = {v: k for k, v in BINANCE_INTERVAL_MAP.items()}
-
-
-def _parse_interval_seconds(interval: str) -> int:
-    from app.config import parse_interval_seconds
-    return parse_interval_seconds(interval)
 
 
 def _best_base_interval(target_seconds: int) -> tuple[str, int]:
@@ -34,7 +29,7 @@ def _best_base_interval(target_seconds: int) -> tuple[str, int]:
     if candidates:
         best_secs, best_name = candidates[0]
         return best_name, best_secs
-    return "1m", 60
+    raise ValueError(f"No Binance base interval can build {target_seconds}s candles")
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -63,7 +58,8 @@ class BinanceExchange(BaseExchange):
     async def fetch_historical_candles(
         self, symbol: str, interval: str, limit: int = 500, before: int | None = None
     ) -> list[Candle]:
-        target_seconds = _parse_interval_seconds(interval)
+        interval_config = parse_interval_config(interval)
+        target_seconds = interval_config.seconds
         binance_sym = _normalize_symbol(symbol)
 
         if target_seconds in NATIVE_INTERVAL_SECONDS:
@@ -95,7 +91,8 @@ class BinanceExchange(BaseExchange):
         interval: str,
         on_candle: Callable[[Candle], None],
     ) -> asyncio.Task:
-        target_seconds = _parse_interval_seconds(interval)
+        interval_config = parse_interval_config(interval)
+        target_seconds = interval_config.seconds
         binance_sym = _normalize_symbol(symbol).lower()
 
         if target_seconds in NATIVE_INTERVAL_SECONDS:
