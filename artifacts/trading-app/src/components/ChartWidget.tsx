@@ -128,6 +128,61 @@ function formatChartDate(time: Time, timeZone: string): string {
   }
 }
 
+
+function intervalToSeconds(interval: string): number | null {
+  const normalized = interval.trim();
+  const match = normalized.match(/^(\d+)?([smhHdDwWM])$/);
+  if (!match) return null;
+
+  const value = Number(match[1] ?? 1);
+  const unit = match[2];
+
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  switch (unit) {
+    case "s":
+      return value;
+    case "m":
+      return value * 60;
+    case "h":
+    case "H":
+      return value * 60 * 60;
+    case "d":
+    case "D":
+      return value * 24 * 60 * 60;
+    case "w":
+    case "W":
+      return value * 7 * 24 * 60 * 60;
+    case "M":
+      return value * 30 * 24 * 60 * 60;
+    default:
+      return null;
+  }
+}
+
+function formatCandleCountdown(secondsLeft: number | null): string {
+  if (secondsLeft === null || !Number.isFinite(secondsLeft)) return "--";
+
+  const safe = Math.max(0, Math.floor(secondsLeft));
+  const days = Math.floor(safe / 86_400);
+  const hours = Math.floor((safe % 86_400) / 3_600);
+  const minutes = Math.floor((safe % 3_600) / 60);
+  const seconds = safe % 60;
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+
+  return `${seconds}s`;
+}
+
+function formatPriceLabel(price: number): string {
+  return price.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 type RsiLinePoint = { time: number; value?: number | null };
 type IndexedLinePoint = LineData<Time> | WhitespaceData<Time>;
 type BollingerBandsLinePoint = {
@@ -599,6 +654,10 @@ export default function ChartWidget() {
   const osSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [nowSeconds, setNowSeconds] = useState(() =>
+    Math.floor(Date.now() / 1000),
+  );
+  const [currentPriceY, setCurrentPriceY] = useState<number | null>(null);
   const [rsiPanelHeight, setRsiPanelHeight] = useState(25);
   const [hoveredRsiValues, setHoveredRsiValues] =
     useState<HoveredRsiValues | null>(null);
@@ -694,6 +753,14 @@ export default function ChartWidget() {
   );
 
   const { lastCandle } = useWebsocket(symbol, interval);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   const renderCandles = useMemo(
     () => withPreviewCandle(allCandles, previewCandle),
@@ -1062,6 +1129,8 @@ export default function ChartWidget() {
       borderVisible: false,
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444",
+      lastValueVisible: false,
+      priceLineVisible: true,
     });
 
     chartRef.current = chart;
@@ -1747,6 +1816,39 @@ export default function ChartWidget() {
     showStochRsi,
   ]);
 
+  const latestCandle = renderCandles.at(-1) ?? null;
+  const latestPrice = latestCandle?.close ?? null;
+  const intervalSeconds = intervalToSeconds(interval);
+  const candleCloseTime =
+    latestCandle !== null && intervalSeconds !== null
+      ? latestCandle.time + intervalSeconds
+      : null;
+  const candleCountdown = formatCandleCountdown(
+    candleCloseTime !== null ? candleCloseTime - nowSeconds : null,
+  );
+  const currentPriceLabelColor =
+    latestCandle !== null && latestCandle.close >= latestCandle.open
+      ? "#22c55e"
+      : "#ef4444";
+
+  useEffect(() => {
+    if (!candlestickSeriesRef.current || latestPrice === null) {
+      setCurrentPriceY(null);
+      return;
+    }
+
+    const updatePriceLabelPosition = () => {
+      const y = candlestickSeriesRef.current?.priceToCoordinate(latestPrice);
+      setCurrentPriceY(y ?? null);
+    };
+
+    updatePriceLabelPosition();
+
+    const frame = window.requestAnimationFrame(updatePriceLabelPosition);
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [latestPrice, nowSeconds, renderCandles, showRsi, rsiPanelHeight]);
+
   return (
     <div ref={rootRef} className="flex flex-col w-full h-full bg-background">
       <div className="relative flex-1 min-h-[300px]">
@@ -1755,6 +1857,19 @@ export default function ChartWidget() {
           className="w-full h-full"
           data-testid="main-chart"
         />
+        {latestPrice !== null && currentPriceY !== null && (
+          <div
+            className="pointer-events-none absolute right-0 z-30 flex w-[70px] flex-col items-end justify-center px-1 py-0.5 text-right text-[11px] font-semibold leading-tight text-white shadow-sm"
+            style={{
+              top: `${currentPriceY}px`,
+              transform: "translateY(-50%)",
+              backgroundColor: currentPriceLabelColor,
+            }}
+          >
+            <div>{formatPriceLabel(latestPrice)}</div>
+            <div className="font-medium">{candleCountdown}</div>
+          </div>
+        )}
         {!isLoadingCandles && (candlesError || allCandles.length === 0) && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="rounded-lg border border-border bg-background/90 px-5 py-3 text-sm text-muted-foreground shadow-lg">

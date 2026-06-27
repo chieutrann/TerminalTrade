@@ -138,6 +138,17 @@ const CUSTOM_INTERVAL_TYPES = [
 
 type CustomIntervalUnit = (typeof CUSTOM_INTERVAL_TYPES)[number]['unit'];
 
+type DataSourceId = 'coinbase' | 'binance';
+
+const DATA_SOURCES: Array<{ id: DataSourceId; label: string }> = [
+  { id: 'coinbase', label: 'Coinbase' },
+  { id: 'binance', label: 'Binance' },
+];
+
+function dataSourceForSymbol(symbol: string): DataSourceId {
+  return symbol.endsWith('/USD') ? 'coinbase' : 'binance';
+}
+
 function resolveChartTimeZone(timeZone: string): string {
   if (timeZone === 'local') {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -198,6 +209,37 @@ function formatIntervalMenuLabel(interval: string): string {
   return `${amount} ${labels[unit]}${plural}`;
 }
 
+function intervalSortValue(interval: string): number {
+  const intervalKey = normalizeIntervalKey(interval);
+  if (!intervalKey) return Number.MAX_SAFE_INTEGER;
+
+  const match = intervalKey.match(/^([1-9][0-9]*)(t|s|m|h|d|w|mo)$/);
+  if (!match) return Number.MAX_SAFE_INTEGER;
+
+  const amount = Number.parseInt(match[1], 10);
+  const unit = match[2];
+
+  switch (unit) {
+    case 't':
+      // Keep tick intervals before time-based intervals.
+      return amount / 1000000;
+    case 's':
+      return amount;
+    case 'm':
+      return amount * 60;
+    case 'h':
+      return amount * 60 * 60;
+    case 'd':
+      return amount * 24 * 60 * 60;
+    case 'w':
+      return amount * 7 * 24 * 60 * 60;
+    case 'mo':
+      return amount * 30 * 24 * 60 * 60;
+    default:
+      return Number.MAX_SAFE_INTEGER;
+  }
+}
+
 export default function TopBar() {
   const {
     symbol,
@@ -218,6 +260,9 @@ export default function TopBar() {
     query: { queryKey: getGetSymbolsQueryKey() }
   });
   const symbols = Array.isArray(symbolsData?.symbols) ? symbolsData.symbols : [symbol];
+  const dataSource = dataSourceForSymbol(symbol);
+  const dataSourceLabel =
+    DATA_SOURCES.find((source) => source.id === dataSource)?.label ?? dataSource;
 
   const { status, lastCandle } = useWebsocket(symbol, interval);
   const [currentClockTime, setCurrentClockTime] = useState(() => new Date());
@@ -227,6 +272,18 @@ export default function TopBar() {
   const chartTimeZoneLabel = useMemo(() => getTimeZoneAbbreviation(chartTimeZone), [chartTimeZone]);
   const secondsSupported = useMemo(() => supportsSecondIntervals(symbol), [symbol]);
   const ticksSupported = useMemo(() => supportsTickIntervals(), []);
+  const sortedFavoriteIntervals = useMemo(
+    () =>
+      [...favoriteIntervals].sort((a, b) => {
+        const sortDiff = intervalSortValue(a) - intervalSortValue(b);
+        if (sortDiff !== 0) return sortDiff;
+
+        return formatIntervalButton(normalizeIntervalKey(a) ?? a).localeCompare(
+          formatIntervalButton(normalizeIntervalKey(b) ?? b),
+        );
+      }),
+    [favoriteIntervals],
+  );
   const intervalMenuGroups = useMemo(() => {
     const groups = INTERVAL_MENU_GROUPS.map((group) => ({
       ...group,
@@ -328,9 +385,19 @@ export default function TopBar() {
           </SelectContent>
         </Select>
 
+        <div
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 font-mono text-xs text-muted-foreground"
+          data-testid="data-source-indicator"
+          title={`API data source: ${dataSourceLabel}`}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          <span className="hidden sm:inline">Source</span>
+          <span className="font-semibold text-foreground">{dataSourceLabel}</span>
+        </div>
+
         <div className="min-w-0 flex-1 overflow-x-auto">
           <div className="flex min-w-max items-center gap-1">
-            {favoriteIntervals.map((item) => {
+            {sortedFavoriteIntervals.map((item) => {
               const chartInterval = intervalToChartInterval(item);
               if (!chartInterval) return null;
               const active = interval === chartInterval;
