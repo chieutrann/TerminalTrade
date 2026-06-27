@@ -35,7 +35,7 @@ import {
   type RsiAdvancedResponse,
 } from "@workspace/api-client-react";
 import { useWebsocket } from "../hooks/useWebsocket";
-import { GripHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 
 function resolveChartTimeZone(timeZone: string): string {
   if (timeZone === "local") {
@@ -645,6 +645,7 @@ export default function ChartWidget() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const rsiPanelRef = useRef<HTMLDivElement>(null);
   const rsiContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const rsiChartRef = useRef<IChartApi | null>(null);
@@ -671,6 +672,7 @@ export default function ChartWidget() {
   );
   const [currentPriceY, setCurrentPriceY] = useState<number | null>(null);
   const [rsiPanelHeight, setRsiPanelHeight] = useState(25);
+  const [isRsiLegendCollapsed, setIsRsiLegendCollapsed] = useState(false);
   const [hoveredRsiValues, setHoveredRsiValues] =
     useState<HoveredRsiValues | null>(null);
   const [allCandles, setAllCandles] = useState<Candle[]>([]);
@@ -688,6 +690,7 @@ export default function ChartWidget() {
   const isLoadingHistoryRef = useRef<boolean>(false);
   const isSyncingLogicalRangeRef = useRef(false);
   const synchronizedRenderFrameRef = useRef<number | null>(null);
+  const rsiResizeFrameRef = useRef<number | null>(null);
   const lastRsiFetchEarliestRef = useRef<number | null>(null);
   const rsiHistoryFetchRef = useRef<AbortController | null>(null);
   const pendingPrependCountRef = useRef(0);
@@ -1092,42 +1095,88 @@ export default function ChartWidget() {
     scheduleSynchronizedRender();
   }, [scheduleSynchronizedRender]);
 
+  const scheduleRsiResizeSync = useCallback(() => {
+    if (rsiResizeFrameRef.current !== null) return;
+
+    rsiResizeFrameRef.current = window.requestAnimationFrame(() => {
+      rsiResizeFrameRef.current = null;
+      syncRsiChartSize();
+      syncRsiLogicalRange();
+    });
+  }, [syncRsiChartSize, syncRsiLogicalRange]);
+
   const resizeRsiChart = useCallback(() => {
     requestAnimationFrame(() => {
       syncRsiChartSize();
     });
   }, [syncRsiChartSize]);
 
+  const applyRsiPanelHeight = useCallback(
+    (height: number) => {
+      const nextHeight = Math.min(70, Math.max(14, height));
+
+      if (rsiPanelRef.current) {
+        rsiPanelRef.current.style.height = `${nextHeight}%`;
+      }
+
+      setRsiPanelHeight(nextHeight);
+      scheduleRsiResizeSync();
+    },
+    [scheduleRsiResizeSync],
+  );
+
   const startRsiResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (!rootRef.current) return;
 
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
+      event.stopPropagation();
+
+      const handle = event.currentTarget;
+      if (handle.setPointerCapture) {
+        handle.setPointerCapture(event.pointerId);
+      }
 
       const startY = event.clientY;
       const startHeight = rsiPanelHeight;
       const totalHeight = rootRef.current.clientHeight || 1;
+      let isDragging = true;
 
       const handlePointerMove = (moveEvent: PointerEvent) => {
+        if (!isDragging || moveEvent.pointerId !== event.pointerId) return;
+        moveEvent.preventDefault();
+        moveEvent.stopPropagation();
+
         const deltaPercent = ((startY - moveEvent.clientY) / totalHeight) * 100;
-        const nextHeight = Math.min(
-          70,
-          Math.max(14, startHeight + deltaPercent),
-        );
-        setRsiPanelHeight(nextHeight);
+        applyRsiPanelHeight(startHeight + deltaPercent);
       };
 
-      const handlePointerUp = () => {
+      const stopResize = (upEvent?: PointerEvent) => {
+        if (upEvent && upEvent.pointerId !== event.pointerId) return;
+        if (!isDragging) return;
+
+        isDragging = false;
+        upEvent?.preventDefault();
+        upEvent?.stopPropagation();
+
         window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointerup", stopResize);
+        window.removeEventListener("pointercancel", stopResize);
+        handle.removeEventListener("lostpointercapture", stopResize);
+
+        if (handle.releasePointerCapture && handle.hasPointerCapture?.(event.pointerId)) {
+          handle.releasePointerCapture(event.pointerId);
+        }
+
         syncRsiChartSize();
       };
 
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointermove", handlePointerMove, { passive: false });
+      window.addEventListener("pointerup", stopResize, { passive: false });
+      window.addEventListener("pointercancel", stopResize, { passive: false });
+      handle.addEventListener("lostpointercapture", stopResize);
     },
-    [syncRsiChartSize, rsiPanelHeight],
+    [applyRsiPanelHeight, syncRsiChartSize, rsiPanelHeight],
   );
 
   useEffect(() => {
@@ -1175,6 +1224,10 @@ export default function ChartWidget() {
       if (synchronizedRenderFrameRef.current !== null) {
         window.cancelAnimationFrame(synchronizedRenderFrameRef.current);
         synchronizedRenderFrameRef.current = null;
+      }
+      if (rsiResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(rsiResizeFrameRef.current);
+        rsiResizeFrameRef.current = null;
       }
       try {
         chart.unsubscribeCrosshairMove(onCrosshairMove);
@@ -1967,6 +2020,7 @@ export default function ChartWidget() {
       </div>
       {showRsi && (
         <div
+          ref={rsiPanelRef}
           className="relative shrink-0 border-t border-border bg-background"
           style={{ height: `${rsiPanelHeight}%`, minHeight: 140 }}
           data-testid="rsi-panel"
@@ -1985,43 +2039,77 @@ export default function ChartWidget() {
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
+            aria-label="Resize RSI panel from price scale"
+            onPointerDown={startRsiResize}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                event.preventDefault();
+                const delta = event.key === "ArrowUp" ? 4 : -4;
+                applyRsiPanelHeight(rsiPanelHeight + delta);
+              }
+            }}
+            className="absolute bottom-0 right-0 top-8 z-40 flex w-[70px] cursor-ns-resize touch-none select-none items-center justify-center text-muted-foreground/70 md:hidden"
+            style={{ touchAction: "none" }}
+          >
+            <GripHorizontal className="h-4 w-4 rotate-90 rounded-sm bg-background/65 shadow-sm backdrop-blur" />
+          </div>
+          <div
+            role="separator"
+            tabIndex={0}
+            aria-orientation="horizontal"
             aria-label="Resize RSI panel"
             onPointerDown={startRsiResize}
             onKeyDown={(event) => {
               if (event.key === "ArrowUp" || event.key === "ArrowDown") {
                 event.preventDefault();
-                setRsiPanelHeight((height) => {
-                  const delta = event.key === "ArrowUp" ? 4 : -4;
-                  return Math.min(70, Math.max(14, height + delta));
-                });
+                const delta = event.key === "ArrowUp" ? 4 : -4;
+                applyRsiPanelHeight(rsiPanelHeight + delta);
               }
             }}
             className="absolute left-0 right-0 top-0 z-50 flex h-8 cursor-ns-resize touch-none select-none items-start justify-center border-t border-border/70 bg-background/20 pt-1 text-muted-foreground backdrop-blur-sm"
+            style={{ touchAction: "none" }}
           >
             <GripHorizontal className="h-4 w-4" />
           </div>
-          <div className="pointer-events-none absolute left-2 top-12 z-20 text-xs leading-tight text-muted-foreground">
-            <div className="space-y-1 rounded-sm bg-background/70 px-1.5 py-1 shadow-sm backdrop-blur">
-              <div>
-                <span>
-                  RSI {rsiPeriod} {rsiSource}
-                </span>
-                <span className="ml-1 font-medium text-[#a855f7]">
-                  {rsiValue === null ? "--" : rsiValue.toFixed(2)}
-                </span>
-              </div>
-              {visibleMaLegends.map((legend) => (
-                <div key={legend.label}>
-                  <span>{legend.label}</span>
-                  <span
-                    className="ml-1 font-medium"
-                    style={{ color: legend.color }}
-                  >
-                    {legend.value === null ? "--" : legend.value.toFixed(2)}
+          <div className="pointer-events-none absolute left-2 top-12 z-20 flex flex-col items-start gap-1 text-xs leading-tight text-muted-foreground">
+            {!isRsiLegendCollapsed && (
+              <div className="pointer-events-none space-y-1 rounded-sm bg-background/70 px-1.5 py-1 shadow-sm backdrop-blur">
+                <div>
+                  <span>
+                    RSI {rsiPeriod} {rsiSource}
+                  </span>
+                  <span className="ml-1 font-medium text-[#a855f7]">
+                    {rsiValue === null ? "--" : rsiValue.toFixed(2)}
                   </span>
                 </div>
-              ))}
-            </div>
+                {visibleMaLegends.map((legend) => (
+                  <div key={legend.label}>
+                    <span>{legend.label}</span>
+                    <span
+                      className="ml-1 font-medium"
+                      style={{ color: legend.color }}
+                    >
+                      {legend.value === null ? "--" : legend.value.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              aria-label={
+                isRsiLegendCollapsed ? "Expand RSI legend" : "Collapse RSI legend"
+              }
+              aria-expanded={!isRsiLegendCollapsed}
+              onClick={() => setIsRsiLegendCollapsed((collapsed) => !collapsed)}
+              className="pointer-events-auto flex h-5 w-5 items-center justify-center rounded-sm border border-border/70 bg-background/80 text-muted-foreground shadow-sm backdrop-blur hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              {isRsiLegendCollapsed ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronUp className="h-3.5 w-3.5" />
+              )}
+            </button>
           </div>
         </div>
       )}

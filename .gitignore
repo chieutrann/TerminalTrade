@@ -61,8 +61,12 @@ ENV/
 # Local environment files
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 !.env.sample
+!**/.env.example
+!**/.env.sample
 
 # Local runtime data
 *.log
