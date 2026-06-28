@@ -12,6 +12,7 @@ import {
   CandlestickSeries,
   LineSeries,
   BaselineSeries,
+  CrosshairMode,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
@@ -817,6 +818,7 @@ export default function ChartWidget() {
     Math.floor(Date.now() / 1000),
   );
   const [currentPriceY, setCurrentPriceY] = useState<number | null>(null);
+  const [isCrosshairOverCurrentPrice, setIsCrosshairOverCurrentPrice] = useState(false);
   const [rsiPanelHeight, setRsiPanelHeight] = useState(25);
   const [isRsiLegendCollapsed, setIsRsiLegendCollapsed] = useState(false);
   const [hoveredRsiValues, setHoveredRsiValues] =
@@ -847,6 +849,7 @@ export default function ChartWidget() {
   const renderCandlesRef = useRef<Candle[]>([]);
   const visibleRsiDataRef = useRef<Partial<RsiAdvancedResponse>>({ rsi: [] });
   const visibleLogicalRangeRef = useRef<LogicalRange | null>(null);
+  const currentPriceYRef = useRef<number | null>(null);
 
   const {
     data: candlesData,
@@ -925,6 +928,10 @@ export default function ChartWidget() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    currentPriceYRef.current = currentPriceY;
+  }, [currentPriceY]);
 
   const renderCandles = useMemo(
     () => withPreviewCandle(allCandles, previewCandle),
@@ -1065,7 +1072,7 @@ export default function ChartWidget() {
           color: theme === "dark" ? "rgba(139,92,246,0.14)" : "#f1f5f9",
         },
       },
-      crosshair: { mode: 1 },
+      crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
         visible: false,
         timeVisible: true,
@@ -1134,7 +1141,7 @@ export default function ChartWidget() {
         horzLines: { visible: false },
       },
       crosshair: {
-        mode: 1,
+        mode: CrosshairMode.Normal,
         vertLine: {
           visible: true,
           labelVisible: true,
@@ -1625,6 +1632,18 @@ export default function ChartWidget() {
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (isSyncingCrosshairRef.current) return;
+
+      if (!param.point) {
+        setIsCrosshairOverCurrentPrice(false);
+        clearSyncedCrosshair();
+        return;
+      }
+
+      const currentPriceY = currentPriceYRef.current;
+      setIsCrosshairOverCurrentPrice(
+        currentPriceY !== null && Math.abs(param.point.y - currentPriceY) < 24,
+      );
+
       if (typeof param.time !== "number") {
         clearSyncedCrosshair();
         return;
@@ -2466,7 +2485,9 @@ export default function ChartWidget() {
         />
         {latestPrice !== null && currentPriceY !== null && (
           <div
-            className="pointer-events-none absolute right-0 z-30 flex w-[70px] flex-col items-end justify-center px-1 py-0.5 text-right text-[11px] font-semibold leading-tight text-white shadow-sm"
+            className={`pointer-events-none absolute right-0 z-[20] flex w-[70px] flex-col items-end justify-center px-1 py-0.5 text-right text-[11px] font-semibold leading-tight text-white shadow-sm transition-opacity ${
+              isCrosshairOverCurrentPrice ? "opacity-0" : "opacity-100"
+            }`}
             style={{
               top: `${currentPriceY}px`,
               transform: "translateY(-50%)",
