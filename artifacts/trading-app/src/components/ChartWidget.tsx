@@ -38,6 +38,9 @@ import {
 import { useWebsocket } from "../hooks/useWebsocket";
 import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 
+const DEFAULT_RSI_PANEL_HEIGHT = 25;
+const DEFAULT_RSI_VALUE_RANGE = { from: 0, to: 100 };
+
 function resolveChartTimeZone(timeZone: string): string {
   if (timeZone === "local") {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -819,7 +822,7 @@ export default function ChartWidget() {
   );
   const [currentPriceY, setCurrentPriceY] = useState<number | null>(null);
   const [isCrosshairOverCurrentPrice, setIsCrosshairOverCurrentPrice] = useState(false);
-  const [rsiPanelHeight, setRsiPanelHeight] = useState(25);
+  const [rsiPanelHeight, setRsiPanelHeight] = useState(DEFAULT_RSI_PANEL_HEIGHT);
   const [isRsiLegendCollapsed, setIsRsiLegendCollapsed] = useState(false);
   const [hoveredRsiValues, setHoveredRsiValues] =
     useState<HoveredRsiValues | null>(null);
@@ -840,7 +843,7 @@ export default function ChartWidget() {
   const synchronizedRenderFrameRef = useRef<number | null>(null);
   const rsiResizeFrameRef = useRef<number | null>(null);
   const timeAxisResizeFrameRef = useRef<number | null>(null);
-  const rsiValueRangeRef = useRef({ from: 0, to: 100 });
+  const rsiValueRangeRef = useRef({ ...DEFAULT_RSI_VALUE_RANGE });
   const lastRsiFetchEarliestRef = useRef<number | null>(null);
   const rsiHistoryFetchRef = useRef<AbortController | null>(null);
   const pendingPrependCountRef = useRef(0);
@@ -1464,6 +1467,13 @@ export default function ChartWidget() {
     },
     [scheduleRsiResizeSync],
   );
+
+  const resetRsiPanelAndScale = useCallback(() => {
+    rsiValueRangeRef.current = { ...DEFAULT_RSI_VALUE_RANGE };
+    rsiChartRef.current?.priceScale("right").setVisibleRange(DEFAULT_RSI_VALUE_RANGE);
+    applyRsiPanelHeight(DEFAULT_RSI_PANEL_HEIGHT);
+    scheduleSynchronizedRender();
+  }, [applyRsiPanelHeight, scheduleSynchronizedRender]);
 
   const applyRsiValueRange = useCallback(
     (range: { from: number; to: number }) => {
@@ -2559,7 +2569,15 @@ export default function ChartWidget() {
             tabIndex={0}
             aria-orientation="horizontal"
             aria-label="Scale RSI values"
-            onPointerDown={startRsiValueScale}
+            onPointerDown={(event) => {
+              if (event.detail > 1) return;
+              startRsiValueScale(event);
+            }}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              resetRsiPanelAndScale();
+            }}
             onKeyDown={(event) => {
               if (event.key === "ArrowUp" || event.key === "ArrowDown") {
                 event.preventDefault();
@@ -2581,7 +2599,15 @@ export default function ChartWidget() {
             tabIndex={0}
             aria-orientation="horizontal"
             aria-label="Resize RSI panel"
-            onPointerDown={startRsiResize}
+            onPointerDown={(event) => {
+              if (event.detail > 1) return;
+              startRsiResize(event);
+            }}
+            onDoubleClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              resetRsiPanelAndScale();
+            }}
             onKeyDown={(event) => {
               if (event.key === "ArrowUp" || event.key === "ArrowDown") {
                 event.preventDefault();
