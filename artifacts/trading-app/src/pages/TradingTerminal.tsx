@@ -19,8 +19,8 @@ function BottomNav({ activePanel, onChange }: { activePanel: BottomPanel; onChan
     }`;
 
   return (
-    <div className="h-14 shrink-0 border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-      <div className="flex h-full items-center">
+    <div className="h-14 w-full max-w-full shrink-0 overflow-x-hidden border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+      <div className="flex h-full min-w-0 items-center">
         <button type="button" className={itemClass(activePanel === null)} onClick={() => onChange(null)}>
           <BarChart3 className="h-5 w-5" />
           <span>Chart</span>
@@ -42,9 +42,9 @@ export default function TradingTerminal() {
   const [activePanel, setActivePanel] = React.useState<BottomPanel>(null);
 
   return (
-    <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-background text-foreground">
+    <div className="flex h-[100dvh] w-full max-w-full flex-col overflow-hidden bg-background text-foreground">
       <TopBar />
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <ChartWidget />
       </div>
       <BottomNav activePanel={activePanel} onChange={setActivePanel} />

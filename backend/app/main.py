@@ -1,10 +1,14 @@
 """FastAPI application entry point."""
 import logging
-import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.routes.health import router as health_router
 from app.routes.candles import router as candles_router

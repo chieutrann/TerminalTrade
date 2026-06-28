@@ -156,6 +156,7 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
+    overflow-x: hidden;
     overscroll-behavior: none;
   }
 
@@ -183,5 +184,16 @@
       inset: 0;
       touch-action: manipulation;
     }
+  }
+}
+
+@layer utilities {
+  .scrollbar-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-hidden::-webkit-scrollbar {
+    display: none;
   }
 }

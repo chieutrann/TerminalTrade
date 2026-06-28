@@ -395,7 +395,7 @@ export default function TopBar() {
           <span className="font-semibold text-foreground">{dataSourceLabel}</span>
         </div>
 
-        <div className="min-w-0 flex-1 overflow-x-auto">
+        <div className="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
           <div className="flex min-w-max items-center gap-1">
             {sortedFavoriteIntervals.map((item) => {
               const chartInterval = intervalToChartInterval(item);
