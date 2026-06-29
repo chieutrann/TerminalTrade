@@ -300,6 +300,38 @@ function intervalToSeconds(interval: string): number | null {
   }
 }
 
+function candleCloseTimeSeconds(candleOpenSeconds: number, interval: string): number | null {
+  const normalized = interval.trim();
+  const monthMatch = normalized.match(/^(\d+)?M$/);
+  const monthStep = monthMatch
+    ? Number(monthMatch[1] ?? 1)
+    : normalized.toLowerCase() === "30d"
+      ? 1
+      : null;
+
+  if (monthStep !== null) {
+    const openDate = new Date(candleOpenSeconds * 1000);
+    const openMonthIndex = openDate.getUTCMonth();
+    const closeMonthIndex =
+      Math.floor(openMonthIndex / monthStep + 1) * monthStep;
+
+    return Math.floor(
+      Date.UTC(
+        openDate.getUTCFullYear(),
+        closeMonthIndex,
+        1,
+        0,
+        0,
+        0,
+        0,
+      ) / 1000,
+    );
+  }
+
+  const intervalSeconds = intervalToSeconds(interval);
+  return intervalSeconds === null ? null : candleOpenSeconds + intervalSeconds;
+}
+
 function formatCandleCountdown(secondsLeft: number | null): string {
   if (secondsLeft === null || !Number.isFinite(secondsLeft)) return "--";
 
@@ -426,6 +458,30 @@ function closedSortedCandles(candles: Candle[] | undefined): Candle[] {
     });
 
   return Array.from(deduped.values()).sort((a, b) => a.time - b.time);
+}
+
+function latestOpenCandle(candles: Candle[] | undefined): Candle | null {
+  const openCandles = candles
+    ?.filter((candle) => candle.is_closed === false)
+    .sort((a, b) => a.time - b.time);
+
+  return openCandles?.at(-1) ? { ...openCandles.at(-1)!, is_closed: false } : null;
+}
+
+function mergePreviewCandle(current: Candle | null, incoming: Candle): Candle {
+  if (!current || current.time !== incoming.time) {
+    return { ...incoming, is_closed: false };
+  }
+
+  return {
+    ...incoming,
+    open: current.open,
+    high: Math.max(current.high, incoming.high),
+    low: Math.min(current.low, incoming.low),
+    close: incoming.close,
+    volume: Math.max(current.volume, incoming.volume),
+    is_closed: false,
+  };
 }
 
 function upsertLockedClosedCandle(current: Candle[], candle: Candle): Candle[] {
@@ -2067,10 +2123,11 @@ export default function ChartWidget() {
     const key = `${symbol}:${interval}`;
     if (candlesData?.candles && seedKeyRef.current !== key) {
       const lockedCandles = closedSortedCandles(candlesData.candles);
+      const openCandle = latestOpenCandle(candlesData.candles);
       seedKeyRef.current = key;
       initialRangeSetRef.current = false;
       setAllCandles(lockedCandles);
-      setPreviewCandle(null);
+      setPreviewCandle(openCandle);
       lastFetchEarliestRef.current = null;
       lastRsiFetchEarliestRef.current = null;
     }
@@ -2457,7 +2514,7 @@ export default function ChartWidget() {
         const lastLockedTime =
           lockedCandlesRef.current.at(-1)?.time ?? Number.NEGATIVE_INFINITY;
         if (lastCandle.time > lastLockedTime) {
-          setPreviewCandle({ ...lastCandle, is_closed: false });
+          setPreviewCandle((current) => mergePreviewCandle(current, lastCandle));
         }
       }
     }
@@ -2477,10 +2534,9 @@ export default function ChartWidget() {
 
   const latestCandle = renderCandles.at(-1) ?? null;
   const latestPrice = latestCandle?.close ?? null;
-  const intervalSeconds = intervalToSeconds(interval);
   const candleCloseTime =
-    latestCandle !== null && intervalSeconds !== null
-      ? latestCandle.time + intervalSeconds
+    latestCandle !== null
+      ? candleCloseTimeSeconds(latestCandle.time, interval)
       : null;
   const candleCountdown = formatCandleCountdown(
     candleCloseTime !== null ? candleCloseTime - nowSeconds : null,

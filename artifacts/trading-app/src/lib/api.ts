@@ -1,11 +1,8 @@
 import { setBaseUrl } from '@workspace/api-client-react';
 
-const defaultBackendUrl = 'https://terminaltrade-backend-0cfcf9f1.fastapicloud.dev';
-
 const rawBackendUrl =
   (import.meta.env.VITE_API_URL as string | undefined) ??
-  (import.meta.env.VITE_BACKEND_URL as string | undefined) ??
-  defaultBackendUrl;
+  (import.meta.env.VITE_BACKEND_URL as string | undefined);
 
 export const backendHttpUrl = rawBackendUrl?.replace(/\/+$/, '') ?? '';
 

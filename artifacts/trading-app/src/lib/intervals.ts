@@ -104,6 +104,24 @@ export function secondsUntilIntervalClose(nowMs: number, interval: string): numb
   const config = parseIntervalConfig(interval);
   if (!config) return null;
 
+  if (config.unit === "mo" || interval.trim().toLowerCase() === "30d") {
+    const monthStep = config.unit === "mo" ? config.value : 1;
+    const now = new Date(nowMs);
+    const monthIndex = now.getUTCMonth();
+    const nextMonthIndex = Math.floor(monthIndex / monthStep + 1) * monthStep;
+    const nextCloseMs = Date.UTC(
+      now.getUTCFullYear(),
+      nextMonthIndex,
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+
+    return Math.max(0, Math.ceil((nextCloseMs - nowMs) / 1000));
+  }
+
   const elapsed = nowMs % config.milliseconds;
   const remainingMs = elapsed === 0 ? config.milliseconds : config.milliseconds - elapsed;
   return Math.max(0, Math.ceil(remainingMs / 1000));
