@@ -40,6 +40,11 @@ import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 
 const DEFAULT_RSI_PANEL_HEIGHT = 25;
 const DEFAULT_RSI_VALUE_RANGE = { from: 0, to: 100 };
+const HOVERED_CANDLE_EVENT = "terminal-trade:hovered-candle";
+
+function emitHoveredCandle(candle: Candle | null) {
+  window.dispatchEvent(new CustomEvent<Candle | null>(HOVERED_CANDLE_EVENT, { detail: candle }));
+}
 
 function resolveChartTimeZone(timeZone: string): string {
   if (timeZone === "local") {
@@ -1300,6 +1305,7 @@ export default function ChartWidget() {
       ?.clearCrosshairPosition?.();
     (timeAxisChartRef.current as unknown as { clearCrosshairPosition?: () => void })
       ?.clearCrosshairPosition?.();
+    emitHoveredCandle(null);
   }, []);
 
   const syncCrosshairAtIndex = useCallback((index: number, source: "main" | "rsi" | "time") => {
@@ -1314,6 +1320,7 @@ export default function ChartWidget() {
       clearSyncedCrosshair();
       return;
     }
+    emitHoveredCandle(candle);
 
     const time = roundedIndex as Time;
     const rsiPoint = visibleRsiDataRef.current.rsi?.find(
