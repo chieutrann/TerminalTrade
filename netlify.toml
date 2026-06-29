@@ -1,0 +1,6 @@
+[build]
+  command = "pnpm --filter @workspace/trading-app... run build"
+  publish = "artifacts/trading-app/dist/public"
+
+[build.environment]
+  PNPM_VERSION = "10.30.3"
