@@ -375,18 +375,31 @@ export default function TopBar() {
     <div className="h-14 shrink-0 border-b border-border bg-card flex items-center justify-between px-3" data-testid="topbar">
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <Select value={symbol} onValueChange={setSymbol}>
-          <SelectTrigger className="h-9 w-[126px] shrink-0 border-border bg-secondary/50 font-mono text-sm font-bold shadow-none sm:w-[180px] sm:text-lg" data-testid="select-symbol">
+          <SelectTrigger className="h-9 w-[126px] shrink-0 border-border bg-secondary/50 font-mono text-sm font-bold shadow-none sm:w-[180px] sm:text-lg [&_[data-symbol-source]]:hidden" data-testid="select-symbol">
             <SelectValue placeholder="Select Symbol" />
           </SelectTrigger>
-          <SelectContent>
-            {symbols.map(s => (
-              <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>
-            ))}
+          <SelectContent className="w-[220px] sm:w-[240px]">
+            {symbols.map((s) => {
+              const source = dataSourceForSymbol(s);
+              const sourceLabel =
+                DATA_SOURCES.find((item) => item.id === source)?.label ?? source;
+
+              return (
+                <SelectItem key={s} value={s} textValue={s} className="font-mono">
+                  <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                    <span className="min-w-0 truncate font-semibold">{s}</span>
+                    <span data-symbol-source className="shrink-0 rounded border border-border bg-secondary/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground sm:normal-case sm:tracking-normal">
+                      {sourceLabel}
+                    </span>
+                  </span>
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
 
         <div
-          className="flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 font-mono text-xs text-muted-foreground"
+          className="hidden h-9 shrink-0 items-center gap-1.5 rounded-md border border-border bg-secondary/50 px-2 font-mono text-xs text-muted-foreground sm:flex"
           data-testid="data-source-indicator"
           title={`API data source: ${dataSourceLabel}`}
         >

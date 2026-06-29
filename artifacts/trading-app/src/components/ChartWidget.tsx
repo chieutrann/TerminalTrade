@@ -801,7 +801,7 @@ export default function ChartWidget() {
   const rsiChartRef = useRef<IChartApi | null>(null);
   const timeScaleRef = useRef<SharedTimeScale | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const rsiBandOverlayRef = useRef<HTMLDivElement>(null);
+  const rsiBandFillSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const rsiOverboughtFillSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const rsiOversoldFillSeriesRef = useRef<ISeriesApi<"Baseline"> | null>(null);
   const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -842,7 +842,9 @@ export default function ChartWidget() {
   const isSyncingLogicalRangeRef = useRef(false);
   const synchronizedRenderFrameRef = useRef<number | null>(null);
   const rsiResizeFrameRef = useRef<number | null>(null);
+  const rsiPanelHeightFrameRef = useRef<number | null>(null);
   const timeAxisResizeFrameRef = useRef<number | null>(null);
+  const rsiPanelHeightRef = useRef(DEFAULT_RSI_PANEL_HEIGHT);
   const rsiValueRangeRef = useRef({ ...DEFAULT_RSI_VALUE_RANGE });
   const lastRsiFetchEarliestRef = useRef<number | null>(null);
   const rsiHistoryFetchRef = useRef<AbortController | null>(null);
@@ -1218,31 +1220,6 @@ export default function ChartWidget() {
       entry !== null,
   );
 
-  const updateRsiBandOverlay = useCallback(() => {
-    const overlay = rsiBandOverlayRef.current;
-    const rsiSeries = rsiSeriesRef.current;
-
-    if (!overlay || !rsiSeries) return;
-
-    const upperLevel = Math.max(obLevel, osLevel);
-    const lowerLevel = Math.min(obLevel, osLevel);
-    const upperY = rsiSeries.priceToCoordinate(upperLevel);
-    const lowerY = rsiSeries.priceToCoordinate(lowerLevel);
-
-    if (upperY === null || lowerY === null) {
-      overlay.style.display = "none";
-      return;
-    }
-
-    overlay.style.display = "block";
-    overlay.style.top = `${Math.min(upperY, lowerY)}px`;
-    overlay.style.height = `${Math.abs(lowerY - upperY)}px`;
-    overlay.style.backgroundColor =
-      theme === "dark"
-        ? "rgba(244, 114, 182, 0.14)"
-        : "rgba(244, 114, 182, 0.18)";
-  }, [obLevel, osLevel, theme]);
-
   const logAlignment = useCallback((index: number) => {
     const x = timeScaleRef.current?.indexToX(index) ?? null;
     const payload = {
@@ -1412,9 +1389,8 @@ export default function ChartWidget() {
       if (isSyncingLogicalRangeRef.current) return;
 
       syncLinkedLogicalRange(range);
-      updateRsiBandOverlay();
     },
-    [formatIndexedTimeAxisLabel, syncLinkedLogicalRange, updateRsiBandOverlay],
+    [formatIndexedTimeAxisLabel, syncLinkedLogicalRange],
   );
 
   const scheduleSynchronizedRender = useCallback(() => {
@@ -1423,9 +1399,8 @@ export default function ChartWidget() {
     synchronizedRenderFrameRef.current = window.requestAnimationFrame(() => {
       synchronizedRenderFrameRef.current = null;
       syncRsiLogicalRange();
-      updateRsiBandOverlay();
     });
-  }, [syncRsiLogicalRange, updateRsiBandOverlay]);
+  }, [syncRsiLogicalRange]);
 
   const syncRsiChartSize = useCallback(() => {
     if (!rsiContainerRef.current || !rsiChartRef.current) return;
@@ -1455,15 +1430,31 @@ export default function ChartWidget() {
   }, [syncRsiChartSize]);
 
   const applyRsiPanelHeight = useCallback(
-    (height: number) => {
+    (height: number, options: { commit?: boolean; syncChart?: boolean } = {}) => {
       const nextHeight = Math.min(70, Math.max(14, height));
+      rsiPanelHeightRef.current = nextHeight;
 
       if (rsiPanelRef.current) {
-        rsiPanelRef.current.style.height = `${nextHeight}%`;
+        if (options.commit === false) {
+          if (rsiPanelHeightFrameRef.current === null) {
+            rsiPanelHeightFrameRef.current = window.requestAnimationFrame(() => {
+              rsiPanelHeightFrameRef.current = null;
+              if (rsiPanelRef.current) {
+                rsiPanelRef.current.style.height = `${rsiPanelHeightRef.current}%`;
+              }
+            });
+          }
+        } else {
+          rsiPanelRef.current.style.height = `${nextHeight}%`;
+        }
       }
 
-      setRsiPanelHeight(nextHeight);
-      scheduleRsiResizeSync();
+      if (options.commit !== false) {
+        setRsiPanelHeight(nextHeight);
+      }
+      if (options.syncChart !== false) {
+        scheduleRsiResizeSync();
+      }
     },
     [scheduleRsiResizeSync],
   );
@@ -1508,7 +1499,7 @@ export default function ChartWidget() {
       }
 
       const startY = event.clientY;
-      const startHeight = rsiPanelHeight;
+      const startHeight = rsiPanelHeightRef.current;
       const totalHeight = rootRef.current.clientHeight || 1;
       let isDragging = true;
 
@@ -1518,7 +1509,10 @@ export default function ChartWidget() {
         moveEvent.stopPropagation();
 
         const deltaPercent = ((startY - moveEvent.clientY) / totalHeight) * 100;
-        applyRsiPanelHeight(startHeight + deltaPercent);
+        applyRsiPanelHeight(startHeight + deltaPercent, {
+          commit: false,
+          syncChart: false,
+        });
       };
 
       const stopResize = (upEvent?: PointerEvent) => {
@@ -1538,6 +1532,7 @@ export default function ChartWidget() {
           handle.releasePointerCapture(event.pointerId);
         }
 
+        setRsiPanelHeight(rsiPanelHeightRef.current);
         syncRsiChartSize();
       };
 
@@ -1546,7 +1541,7 @@ export default function ChartWidget() {
       window.addEventListener("pointercancel", stopResize, { passive: false });
       handle.addEventListener("lostpointercapture", stopResize);
     },
-    [applyRsiPanelHeight, syncRsiChartSize, rsiPanelHeight],
+    [applyRsiPanelHeight, syncRsiChartSize],
   );
 
   const startRsiValueScale = useCallback(
@@ -1672,6 +1667,10 @@ export default function ChartWidget() {
       if (rsiResizeFrameRef.current !== null) {
         window.cancelAnimationFrame(rsiResizeFrameRef.current);
         rsiResizeFrameRef.current = null;
+      }
+      if (rsiPanelHeightFrameRef.current !== null) {
+        window.cancelAnimationFrame(rsiPanelHeightFrameRef.current);
+        rsiPanelHeightFrameRef.current = null;
       }
       if (timeAxisResizeFrameRef.current !== null) {
         window.cancelAnimationFrame(timeAxisResizeFrameRef.current);
@@ -1805,6 +1804,26 @@ export default function ChartWidget() {
       autoscaleInfoProvider: fixedRsiAutoscale,
     });
 
+    const rsiBandFillSeries = chart.addSeries(BaselineSeries, {
+      baseValue: { type: "price", price: Math.min(obLevel, osLevel) },
+      topFillColor1:
+        theme === "dark"
+          ? "rgba(244, 114, 182, 0.14)"
+          : "rgba(244, 114, 182, 0.18)",
+      topFillColor2:
+        theme === "dark"
+          ? "rgba(244, 114, 182, 0.14)"
+          : "rgba(244, 114, 182, 0.18)",
+      topLineColor: "rgba(244, 114, 182, 0)",
+      bottomFillColor1: "rgba(244, 114, 182, 0)",
+      bottomFillColor2: "rgba(244, 114, 182, 0)",
+      bottomLineColor: "rgba(244, 114, 182, 0)",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      autoscaleInfoProvider: fixedRsiAutoscale,
+    });
+
     const rsiSeries = chart.addSeries(LineSeries, {
       color: "#a855f7",
       lineWidth: rsiLineWidth,
@@ -1917,6 +1936,7 @@ export default function ChartWidget() {
     });
 
     rsiChartRef.current = chart;
+    rsiBandFillSeriesRef.current = rsiBandFillSeries;
     rsiOverboughtFillSeriesRef.current = overboughtFillSeries;
     rsiOversoldFillSeriesRef.current = oversoldFillSeries;
     rsiSeriesRef.current = rsiSeries;
@@ -1939,7 +1959,6 @@ export default function ChartWidget() {
       const onRsiChange = (range: LogicalRange | null) => {
         if (isSyncingLogicalRangeRef.current) return;
         applyMainLogicalRange(range);
-        updateRsiBandOverlay();
       };
       rsiTs.subscribeVisibleLogicalRangeChange(onRsiChange);
       scheduleSynchronizedRender();
@@ -1952,7 +1971,6 @@ export default function ChartWidget() {
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       if (isSyncingCrosshairRef.current) return;
-      updateRsiBandOverlay();
 
       if (typeof param.time !== "number" || !param.seriesData.size) {
         setHoveredRsiValues(null);
@@ -1990,6 +2008,7 @@ export default function ChartWidget() {
       window.removeEventListener("resize", handleResize);
       chart.remove();
       rsiChartRef.current = null;
+      rsiBandFillSeriesRef.current = null;
       rsiOverboughtFillSeriesRef.current = null;
       rsiOversoldFillSeriesRef.current = null;
       rsiSeriesRef.current = null;
@@ -2029,7 +2048,6 @@ export default function ChartWidget() {
     osLevel,
     applyMainLogicalRange,
     scheduleSynchronizedRender,
-    updateRsiBandOverlay,
     clearSyncedCrosshair,
     syncCrosshairAtIndex,
   ]);
@@ -2308,7 +2326,12 @@ export default function ChartWidget() {
         visibleRsiData.rsi,
         indexedCandles,
       );
+      const rsiBandData = makeLevelLineData(
+        Math.max(obLevel, osLevel),
+        indexedCandles,
+      ) as IndexedBaselinePoint[];
 
+      rsiBandFillSeriesRef.current?.setData(rsiBandData);
       rsiOverboughtFillSeriesRef.current?.setData(rsiBaselineData);
       rsiOversoldFillSeriesRef.current?.setData(rsiBaselineData);
       rsiSeriesRef.current.setData(rsiLineData);
@@ -2560,11 +2583,6 @@ export default function ChartWidget() {
             data-testid="rsi-chart"
           />
           <div
-            ref={rsiBandOverlayRef}
-            className="pointer-events-none absolute left-0 right-[70px] z-[1] hidden"
-            aria-hidden="true"
-          />
-          <div
             role="separator"
             tabIndex={0}
             aria-orientation="horizontal"
@@ -2615,10 +2633,12 @@ export default function ChartWidget() {
                 applyRsiPanelHeight(rsiPanelHeight + delta);
               }
             }}
-            className="absolute left-0 right-0 top-0 z-50 flex h-8 cursor-ns-resize touch-none select-none items-start justify-center border-t border-border/70 bg-background/20 pt-1 text-muted-foreground backdrop-blur-sm"
+            className="absolute left-0 right-0 top-0 z-50 flex h-8 cursor-ns-resize touch-none select-none items-start justify-center bg-transparent pt-0 text-muted-foreground sm:border-t sm:border-border/70 sm:bg-background/20 sm:pt-1 sm:backdrop-blur-sm [&>svg]:h-3 [&>svg]:w-3 sm:[&>svg]:h-4 sm:[&>svg]:w-4"
             style={{ touchAction: "none" }}
           >
-            <GripHorizontal className="h-4 w-4" />
+            <div className="flex h-2 w-full items-start justify-center border-t border-border/70 bg-background/20 backdrop-blur-sm sm:contents">
+              <GripHorizontal className="h-3 w-3 sm:h-4 sm:w-4" />
+            </div>
           </div>
           <div className="pointer-events-none absolute left-2 top-12 z-20 flex flex-col items-start gap-1 text-xs leading-tight text-muted-foreground">
             {!isRsiLegendCollapsed && (
