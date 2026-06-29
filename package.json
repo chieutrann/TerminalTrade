@@ -6,7 +6,7 @@
     "preinstall": "node -e \"const fs=require('fs'); for (const file of ['package-lock.json','yarn.lock']) fs.rmSync(file,{force:true}); if (!/^pnpm\\//.test(process.env.npm_config_user_agent || '')) { console.error('Use pnpm instead'); process.exit(1); }\"",
     "start": "node scripts/start-backend.mjs",
     "start:backend": "node scripts/start-backend.mjs",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "build": "pnpm --filter ./artifacts/trading-app build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
