@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import TradingTerminal from "@/pages/TradingTerminal";
 import { useTradingStore } from './store/useTradingStore';
+import LoginGate from './components/LoginGate';
 
 const queryClient = new QueryClient();
 
@@ -32,9 +33,11 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
+        <LoginGate>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
+        </LoginGate>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>

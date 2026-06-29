@@ -5,3 +5,5 @@
 [build.environment]
   PNPM_VERSION = "10.30.3"
   VITE_API_URL = "https://terminaltrade-backend-0cfcf9f1.fastapicloud.dev"
+  VITE_LOGIN_USERNAME = "admin"
+  VITE_LOGIN_PASSWORD = "TradeTerminal2026!"
