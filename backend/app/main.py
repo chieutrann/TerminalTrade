@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -14,6 +15,7 @@ from app.routes.health import router as health_router
 from app.routes.candles import router as candles_router
 from app.routes.indicators import router as indicators_router
 from app.routes.websocket import router as ws_router
+from app.config import ALLOWED_HOSTS, APP_ENV, CORS_ALLOW_CREDENTIALS, FRONTEND_ORIGINS
 from app.services.exchange_manager import ExchangeManager
 
 logging.basicConfig(
@@ -39,10 +41,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+if ALLOWED_HOSTS:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
+
+cors_origins = FRONTEND_ORIGINS
+if not cors_origins and APP_ENV != "production":
+    cors_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=CORS_ALLOW_CREDENTIALS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

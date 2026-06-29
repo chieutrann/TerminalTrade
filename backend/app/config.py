@@ -2,6 +2,18 @@ import os
 import re
 from dataclasses import dataclass
 
+
+def _split_env_list(name: str, default: str = "") -> list[str]:
+    value = os.environ.get(name, default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 SUPPORTED_SYMBOLS = [
     "BTC/USD",
     "BTC/USDT",
@@ -27,11 +39,16 @@ class IntervalConfig:
     label: str
     bucket_ms: int
 
-COINBASE_WS_URL = "wss://ws-feed.exchange.coinbase.com"
-COINBASE_REST_URL = "https://api.exchange.coinbase.com"
+APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
+FRONTEND_ORIGINS = _split_env_list("FRONTEND_ORIGINS")
+ALLOWED_HOSTS = _split_env_list("ALLOWED_HOSTS")
+CORS_ALLOW_CREDENTIALS = _env_bool("CORS_ALLOW_CREDENTIALS", default=False)
 
-BINANCE_WS_URL = "wss://stream.binance.com:9443/ws"
-BINANCE_REST_URL = "https://api.binance.com"
+COINBASE_WS_URL = os.environ.get("COINBASE_WS_URL", "wss://ws-feed.exchange.coinbase.com")
+COINBASE_REST_URL = os.environ.get("COINBASE_REST_URL", "https://api.exchange.coinbase.com")
+
+BINANCE_WS_URL = os.environ.get("BINANCE_WS_URL", "wss://data-stream.binance.vision/ws")
+BINANCE_REST_URL = os.environ.get("BINANCE_REST_URL", "https://data-api.binance.vision")
 
 COINBASE_USD_SYMBOLS = {"BTC/USD": "BTC-USD", "ETH/USD": "ETH-USD"}
 BINANCE_SYMBOLS = {

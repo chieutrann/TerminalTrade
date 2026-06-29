@@ -19,6 +19,33 @@ NATIVE_INTERVAL_SECONDS = set(BINANCE_INTERVAL_MAP.keys())
 
 BINANCE_STR_TO_SECONDS = {v: k for k, v in BINANCE_INTERVAL_MAP.items()}
 
+BINANCE_REST_FALLBACK_URLS = [
+    "https://data-api.binance.vision",
+    "https://api.binance.com",
+]
+
+BINANCE_WS_FALLBACK_URLS = [
+    "wss://data-stream.binance.vision/ws",
+    "wss://stream.binance.com:9443/ws",
+]
+
+
+def _unique_urls(primary: str, fallbacks: list[str]) -> list[str]:
+    urls: list[str] = []
+    for url in [primary, *fallbacks]:
+        normalized = url.rstrip("/")
+        if normalized and normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def _binance_rest_urls() -> list[str]:
+    return _unique_urls(BINANCE_REST_URL, BINANCE_REST_FALLBACK_URLS)
+
+
+def _binance_ws_urls() -> list[str]:
+    return _unique_urls(BINANCE_WS_URL, BINANCE_WS_FALLBACK_URLS)
+
 
 def _best_base_interval(target_seconds: int) -> tuple[str, int]:
     """Return the best native Binance interval to aggregate from."""
@@ -75,15 +102,25 @@ class BinanceExchange(BaseExchange):
     async def _fetch_native(
         self, binance_sym: str, interval: str, limit: int, before: int | None = None
     ) -> list[Candle]:
-        url = f"{BINANCE_REST_URL}/api/v3/klines"
         params: dict[str, str | int] = {"symbol": binance_sym, "interval": interval, "limit": min(limit, 1000)}
         if before is not None:
             params["endTime"] = before * 1000
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-        return [_parse_kline_to_candle(k, is_closed=True) for k in data]
+            last_error: Exception | None = None
+            for base_url in _binance_rest_urls():
+                url = f"{base_url}/api/v3/klines"
+                try:
+                    resp = await client.get(url, params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return [_parse_kline_to_candle(k, is_closed=True) for k in data]
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning(f"Binance REST failed via {base_url}: {exc}")
+
+            if last_error:
+                raise last_error
+            raise RuntimeError("No Binance REST endpoints configured")
 
     async def subscribe_candles(
         self,
@@ -117,37 +154,43 @@ class BinanceExchange(BaseExchange):
         norm_interval: str,
         on_candle: Callable[[Candle], None],
     ) -> None:
-        url = f"{BINANCE_WS_URL}/{binance_sym}@kline_{native_interval}"
         backoff = 1.0
         while True:
-            try:
-                logger.info(f"Binance WS connecting: {url}")
-                async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
-                    backoff = 1.0
-                    logger.info(f"Binance WS connected: {norm_symbol} {norm_interval}")
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                            k = msg.get("k", {})
-                            candle = Candle(
-                                time=int(k["t"]) // 1000,
-                                open=float(k["o"]),
-                                high=float(k["h"]),
-                                low=float(k["l"]),
-                                close=float(k["c"]),
-                                volume=float(k["v"]),
-                                is_closed=bool(k.get("x", False)),
-                            )
-                            on_candle(candle)
-                        except Exception as e:
-                            logger.warning(f"Binance WS parse error: {e}")
-            except asyncio.CancelledError:
-                logger.info(f"Binance stream cancelled: {norm_symbol} {norm_interval}")
-                return
-            except Exception as e:
-                logger.error(f"Binance WS error: {e}. Reconnecting in {backoff}s")
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60.0)
+            last_error: Exception | None = None
+            for base_url in _binance_ws_urls():
+                url = f"{base_url}/{binance_sym}@kline_{native_interval}"
+                try:
+                    logger.info(f"Binance WS connecting: {url}")
+                    async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                        backoff = 1.0
+                        logger.info(f"Binance WS connected: {norm_symbol} {norm_interval}")
+                        async for raw in ws:
+                            try:
+                                msg = json.loads(raw)
+                                k = msg.get("k", {})
+                                candle = Candle(
+                                    time=int(k["t"]) // 1000,
+                                    open=float(k["o"]),
+                                    high=float(k["h"]),
+                                    low=float(k["l"]),
+                                    close=float(k["c"]),
+                                    volume=float(k["v"]),
+                                    is_closed=bool(k.get("x", False)),
+                                )
+                                on_candle(candle)
+                            except Exception as e:
+                                logger.warning(f"Binance WS parse error: {e}")
+                except asyncio.CancelledError:
+                    logger.info(f"Binance stream cancelled: {norm_symbol} {norm_interval}")
+                    return
+                except Exception as e:
+                    last_error = e
+                    logger.error(f"Binance WS error via {base_url}: {e}")
+                    continue
+
+            logger.error(f"All Binance WS endpoints failed: {last_error}. Reconnecting in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60.0)
 
     async def _stream_aggregated(
         self,
@@ -160,6 +203,14 @@ class BinanceExchange(BaseExchange):
         on_candle: Callable[[Candle], None],
     ) -> None:
         """Aggregate a smaller stream into custom-sized candles."""
+        return await self._stream_aggregated_with_fallback(
+            binance_sym,
+            base_name,
+            norm_interval,
+            target_seconds,
+            on_candle,
+        )
+
         url = f"{BINANCE_WS_URL}/{binance_sym}@kline_{base_name}"
         current_bucket: Optional[Candle] = None
         backoff = 1.0
@@ -213,3 +264,71 @@ class BinanceExchange(BaseExchange):
                 logger.error(f"Binance aggregated WS error: {e}. Reconnecting in {backoff}s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60.0)
+
+    async def _stream_aggregated_with_fallback(
+        self,
+        binance_sym: str,
+        base_name: str,
+        norm_interval: str,
+        target_seconds: int,
+        on_candle: Callable[[Candle], None],
+    ) -> None:
+        current_bucket: Optional[Candle] = None
+        backoff = 1.0
+
+        while True:
+            last_error: Exception | None = None
+            for base_url in _binance_ws_urls():
+                url = f"{base_url}/{binance_sym}@kline_{base_name}"
+                try:
+                    logger.info(f"Binance aggregated WS connecting: {url} -> {norm_interval}")
+                    async with websockets.connect(url, ping_interval=20, ping_timeout=10) as ws:
+                        backoff = 1.0
+                        async for raw in ws:
+                            try:
+                                msg = json.loads(raw)
+                                k = msg.get("k", {})
+                                base = Candle(
+                                    time=int(k["t"]) // 1000,
+                                    open=float(k["o"]),
+                                    high=float(k["h"]),
+                                    low=float(k["l"]),
+                                    close=float(k["c"]),
+                                    volume=float(k["v"]),
+                                    is_closed=bool(k.get("x", False)),
+                                )
+                                bucket_time = (base.time // target_seconds) * target_seconds
+
+                                if current_bucket is None or current_bucket.time != bucket_time:
+                                    if current_bucket is not None:
+                                        current_bucket.is_closed = True
+                                        on_candle(current_bucket)
+                                    current_bucket = Candle(
+                                        time=bucket_time,
+                                        open=base.open,
+                                        high=base.high,
+                                        low=base.low,
+                                        close=base.close,
+                                        volume=base.volume,
+                                        is_closed=False,
+                                    )
+                                else:
+                                    current_bucket.high = max(current_bucket.high, base.high)
+                                    current_bucket.low = min(current_bucket.low, base.low)
+                                    current_bucket.close = base.close
+                                    current_bucket.volume += base.volume
+                                    current_bucket.is_closed = False
+
+                                on_candle(current_bucket)
+                            except Exception as e:
+                                logger.warning(f"Binance aggregated parse error: {e}")
+                except asyncio.CancelledError:
+                    return
+                except Exception as e:
+                    last_error = e
+                    logger.error(f"Binance aggregated WS error via {base_url}: {e}")
+                    continue
+
+            logger.error(f"All Binance aggregated WS endpoints failed: {last_error}. Reconnecting in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60.0)

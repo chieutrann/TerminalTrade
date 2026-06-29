@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import type { Candle } from '@workspace/api-client-react';
+import { getBackendWebSocketUrl } from '@/lib/api';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -19,8 +20,7 @@ export function useWebsocket(symbol: string, interval: string) {
       }
 
       setStatus('connecting');
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/api/ws/candles`;
+      const wsUrl = getBackendWebSocketUrl('/api/ws/candles');
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
