@@ -13,70 +13,75 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 const basePath = process.env.BASE_PATH || "/";
+const appRoot = path.resolve(import.meta.dirname);
+
 export default defineConfig(async ({ mode }) => {
-  const env = loadEnv(mode, import.meta.dirname, "");
+  const env = loadEnv(mode, appRoot, "");
   const backendPort = env.BACKEND_PORT || process.env.BACKEND_PORT || "8080";
   const backendTarget =
     (env.VITE_API_URL || env.VITE_BACKEND_URL)?.replace(/\/+$/, "") ||
     `http://localhost:${backendPort}`;
 
+  console.info(`[vite] backend target: ${backendTarget}`);
+
   return {
-  base: basePath,
-  plugins: [
-    react(),
-    tailwindcss(),
-    runtimeErrorOverlay(),
-    ...(process.env.NODE_ENV !== "production" &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import("@replit/vite-plugin-cartographer").then((m) =>
-            m.cartographer({
-              root: path.resolve(import.meta.dirname, ".."),
-            }),
-          ),
-          await import("@replit/vite-plugin-dev-banner").then((m) =>
-            m.devBanner(),
-          ),
-        ]
-      : []),
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(import.meta.dirname, "src"),
-      "@assets": path.resolve(import.meta.dirname, "..", "..", "attached_assets"),
-    },
-    dedupe: ["react", "react-dom"],
-  },
-  root: path.resolve(import.meta.dirname),
-  build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
-    emptyOutDir: true,
-  },
-  server: {
-    port,
-    strictPort: true,
-    host: "0.0.0.0",
-    allowedHosts: true,
-    proxy: {
-      "/api": {
-        target: backendTarget,
-        changeOrigin: true,
-        ws: true,
+    base: basePath,
+    envDir: appRoot,
+    plugins: [
+      react(),
+      tailwindcss(),
+      runtimeErrorOverlay(),
+      ...(process.env.NODE_ENV !== "production" &&
+      process.env.REPL_ID !== undefined
+        ? [
+            await import("@replit/vite-plugin-cartographer").then((m) =>
+              m.cartographer({
+                root: path.resolve(import.meta.dirname, ".."),
+              }),
+            ),
+            await import("@replit/vite-plugin-dev-banner").then((m) =>
+              m.devBanner(),
+            ),
+          ]
+        : []),
+    ],
+    resolve: {
+      alias: {
+        "@": path.resolve(import.meta.dirname, "src"),
+        "@assets": path.resolve(import.meta.dirname, "..", "..", "attached_assets"),
       },
-      "/ws": {
-        target: backendTarget,
-        ws: true,
-        changeOrigin: true,
+      dedupe: ["react", "react-dom"],
+    },
+    root: appRoot,
+    build: {
+      outDir: path.resolve(import.meta.dirname, "dist/public"),
+      emptyOutDir: true,
+    },
+    server: {
+      port,
+      strictPort: true,
+      host: "0.0.0.0",
+      allowedHosts: true,
+      proxy: {
+        "/api": {
+          target: backendTarget,
+          changeOrigin: true,
+          ws: true,
+        },
+        "/ws": {
+          target: backendTarget,
+          ws: true,
+          changeOrigin: true,
+        },
+      },
+      fs: {
+        strict: true,
       },
     },
-    fs: {
-      strict: true,
+    preview: {
+      port,
+      host: "0.0.0.0",
+      allowedHosts: true,
     },
-  },
-  preview: {
-    port,
-    host: "0.0.0.0",
-    allowedHosts: true,
-  },
   };
 });
