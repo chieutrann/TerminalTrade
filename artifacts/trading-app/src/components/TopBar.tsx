@@ -366,6 +366,17 @@ export default function TopBar() {
     if (normalized) setInterval(normalized);
   };
 
+  useEffect(() => {
+    const intervalKey = normalizeIntervalKey(interval);
+    if (!intervalKey) return;
+
+    const invalidSecondsInterval = intervalKey.endsWith('s') && !secondsSupported;
+    const invalidTickInterval = intervalKey.endsWith('t') && !ticksSupported;
+    if (invalidSecondsInterval || invalidTickInterval) {
+      setInterval('1m');
+    }
+  }, [interval, secondsSupported, setInterval, ticksSupported]);
+
   const change = lastCandle ? lastCandle.close - lastCandle.open : null;
   const changePercent = lastCandle && lastCandle.open !== 0 ? (change! / lastCandle.open) * 100 : null;
   const isUp = (change ?? 0) >= 0;
@@ -415,17 +426,29 @@ export default function TopBar() {
               if (!chartInterval) return null;
               const active = interval === chartInterval;
               const intervalKey = normalizeIntervalKey(item) ?? item;
+              const disabledReason = intervalDisabledReason({
+                label: formatIntervalMenuLabel(intervalKey),
+                value: intervalKey,
+                kind: intervalKey.endsWith('t') ? 'tick' : 'time',
+              });
+              const disabled = disabledReason !== null;
               return (
                 <Button
                   key={intervalKey}
                   variant="ghost"
                   size="sm"
+                  disabled={disabled}
+                  title={disabledReason ?? undefined}
                   className={`h-8 min-w-9 rounded-md px-2.5 font-mono text-xs ${
-                    active
+                    active && !disabled
                       ? 'bg-primary text-primary-foreground shadow-[0_0_18px_rgba(139,92,246,0.45)]'
-                      : 'text-muted-foreground hover:bg-secondary'
+                      : disabled
+                        ? 'cursor-not-allowed text-muted-foreground/35 opacity-100'
+                        : 'text-muted-foreground hover:bg-secondary'
                   }`}
-                  onClick={() => setInterval(chartInterval)}
+                  onClick={() => {
+                    if (!disabled) setInterval(chartInterval);
+                  }}
                   data-testid={`btn-interval-${intervalKey}`}
                 >
                   {formatIntervalButton(intervalKey)}
