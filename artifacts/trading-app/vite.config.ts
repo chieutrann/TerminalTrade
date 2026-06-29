@@ -14,13 +14,14 @@ if (Number.isNaN(port) || port <= 0) {
 
 const basePath = process.env.BASE_PATH || "/";
 const appRoot = path.resolve(import.meta.dirname);
+const defaultBackendTarget = "https://terminaltrade-backend-0cfcf9f1.fastapicloud.dev";
 
 export default defineConfig(async ({ mode }) => {
   const env = loadEnv(mode, appRoot, "");
   const backendPort = env.BACKEND_PORT || process.env.BACKEND_PORT || "8080";
   const backendTarget =
     (env.VITE_API_URL || env.VITE_BACKEND_URL)?.replace(/\/+$/, "") ||
-    `http://localhost:${backendPort}`;
+    (env.USE_LOCAL_BACKEND === "true" ? `http://localhost:${backendPort}` : defaultBackendTarget);
 
   console.info(`[vite] backend target: ${backendTarget}`);
 

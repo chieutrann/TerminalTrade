@@ -183,6 +183,17 @@
       position: fixed;
       inset: 0;
       touch-action: manipulation;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    input,
+    textarea,
+    [contenteditable="true"] {
+      -webkit-touch-callout: default;
+      -webkit-user-select: text;
+      user-select: text;
     }
   }
 }
