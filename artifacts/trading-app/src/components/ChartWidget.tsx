@@ -1321,14 +1321,50 @@ export default function ChartWidget() {
   }, []);
 
   const clearSyncedCrosshair = useCallback(() => {
-    (chartRef.current as unknown as { clearCrosshairPosition?: () => void })
-      ?.clearCrosshairPosition?.();
-    (rsiChartRef.current as unknown as { clearCrosshairPosition?: () => void })
-      ?.clearCrosshairPosition?.();
-    (timeAxisChartRef.current as unknown as { clearCrosshairPosition?: () => void })
-      ?.clearCrosshairPosition?.();
+    try {
+      (chartRef.current as unknown as { clearCrosshairPosition?: () => void })
+        ?.clearCrosshairPosition?.();
+    } catch {
+      // Chart can be temporarily unavailable during resize/remount.
+    }
+
+    try {
+      (rsiChartRef.current as unknown as { clearCrosshairPosition?: () => void })
+        ?.clearCrosshairPosition?.();
+    } catch {
+      // RSI chart can be temporarily unavailable during resize/remount.
+    }
+
+    try {
+      (timeAxisChartRef.current as unknown as { clearCrosshairPosition?: () => void })
+        ?.clearCrosshairPosition?.();
+    } catch {
+      // Time-axis chart can be temporarily unavailable during resize/remount.
+    }
+
     emitHoveredCandle(null);
   }, []);
+
+  const setSafeCrosshairPosition = useCallback(
+    <T extends "Candlestick" | "Line">(
+      chart: { setCrosshairPosition?: (price: number, horizontalPosition: Time, series: ISeriesApi<T>) => void } | null,
+      price: number | null | undefined,
+      time: Time | null | undefined,
+      series: ISeriesApi<T> | null,
+    ) => {
+      if (!chart || !series || typeof chart.setCrosshairPosition !== "function") return;
+      if (typeof price !== "number" || !Number.isFinite(price)) return;
+      if (typeof time !== "number" || !Number.isFinite(time)) return;
+
+      try {
+        chart.setCrosshairPosition(price, time, series);
+      } catch {
+        // Lightweight Charts can reject a crosshair sync while a series is remounting
+        // or before data exists for the requested logical time.
+      }
+    },
+    [],
+  );
 
   const syncCrosshairAtIndex = useCallback((index: number, source: "main" | "rsi" | "time") => {
     if (!Number.isFinite(index)) {
@@ -1359,15 +1395,14 @@ export default function ChartWidget() {
       candlestickSeriesRef.current &&
       lastMainPointerPriceRef.current !== null
     ) {
-      (
+      setSafeCrosshairPosition(
         chartRef.current as unknown as {
           setCrosshairPosition?: (
             price: number,
             horizontalPosition: Time,
             series: ISeriesApi<"Candlestick">,
           ) => void;
-        }
-      ).setCrosshairPosition?.(
+        },
         lastMainPointerPriceRef.current,
         time,
         candlestickSeriesRef.current,
@@ -1375,33 +1410,44 @@ export default function ChartWidget() {
     }
 
     if (source !== "rsi" && rsiChartRef.current && rsiSeriesRef.current) {
-      (
+      setSafeCrosshairPosition(
         rsiChartRef.current as unknown as {
           setCrosshairPosition?: (
             price: number,
             horizontalPosition: Time,
             series: ISeriesApi<"Line">,
           ) => void;
-        }
-      ).setCrosshairPosition?.(rsiValue, time, rsiSeriesRef.current);
+        },
+        rsiValue,
+        time,
+        rsiSeriesRef.current,
+      );
     }
 
-    if (source !== "time" && timeAxisChartRef.current && timeAxisSeriesRef.current) {
-      (
-        timeAxisChartRef.current as unknown as {
-          setCrosshairPosition?: (
-            price: number,
-            horizontalPosition: Time,
-            series: ISeriesApi<"Line">,
-          ) => void;
-        }
-      ).setCrosshairPosition?.(0, time, timeAxisSeriesRef.current);
+    if (source !== "time") {
+      const timeAxisChart = timeAxisChartRef.current;
+      const timeAxisSeries = timeAxisSeriesRef.current;
+
+      if (timeAxisChart && timeAxisSeries) {
+        setSafeCrosshairPosition(
+          timeAxisChart as unknown as {
+            setCrosshairPosition?: (
+              price: number,
+              horizontalPosition: Time,
+              series: ISeriesApi<"Line">,
+            ) => void;
+          },
+          0,
+          time,
+          timeAxisSeries,
+        );
+      }
     }
 
     window.requestAnimationFrame(() => {
       isSyncingCrosshairRef.current = false;
     });
-  }, [clearSyncedCrosshair]);
+  }, [clearSyncedCrosshair, setSafeCrosshairPosition]);
 
   const syncLinkedLogicalRange = useCallback((range?: LogicalRange | null) => {
     if (!chartRef.current) return;
@@ -2226,24 +2272,28 @@ export default function ChartWidget() {
       candlestickSeriesRef.current.setData(formattedData);
       const pointerPrice = lastMainPointerPriceRef.current;
       const pointerTime = lastMainPointerTimeRef.current;
+      const pointerTimeNumber = typeof pointerTime === "number" ? pointerTime : null;
       if (
         pointerPrice !== null &&
-        pointerTime !== null &&
+        pointerTimeNumber !== null &&
+        Number.isFinite(pointerPrice) &&
+        Number.isFinite(pointerTimeNumber) &&
+        pointerTimeNumber >= 0 &&
+        pointerTimeNumber < formattedData.length &&
         chartRef.current &&
         candlestickSeriesRef.current
       ) {
         window.requestAnimationFrame(() => {
-          (
+          setSafeCrosshairPosition(
             chartRef.current as unknown as {
               setCrosshairPosition?: (
                 price: number,
                 horizontalPosition: Time,
                 series: ISeriesApi<"Candlestick">,
               ) => void;
-            }
-          ).setCrosshairPosition?.(
+            },
             pointerPrice,
-            pointerTime,
+            pointerTimeNumber as Time,
             candlestickSeriesRef.current!,
           );
         });
@@ -2663,7 +2713,7 @@ export default function ChartWidget() {
   }, [latestPrice, nowSeconds, renderCandles, showRsi, rsiPanelHeight]);
 
   return (
-    <div ref={rootRef} className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background">
+    <div ref={rootRef} className="relative flex h-full w-full min-w-0 flex-col overflow-hidden bg-background pb-8">
       <div className="relative min-h-[180px] min-w-0 flex-1 overflow-hidden sm:min-h-[260px]">
         <div
           ref={chartContainerRef}
@@ -2838,7 +2888,7 @@ export default function ChartWidget() {
       )}
       <div
         ref={timeAxisContainerRef}
-        className="h-8 min-h-8 w-full shrink-0 overflow-hidden border-t border-border bg-background"
+        className="absolute bottom-0 left-0 right-0 z-30 h-8 min-h-8 w-full overflow-hidden border-t border-border bg-background"
         data-testid="bottom-time-axis"
       />
     </div>
