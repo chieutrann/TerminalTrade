@@ -207,4 +207,26 @@
   .scrollbar-hidden::-webkit-scrollbar {
     display: none;
   }
+
+  @media (max-width: 768px) {
+    [class~="text-[10px]"] {
+      font-size: 11px;
+      line-height: 1rem;
+    }
+
+    [class~="text-[11px]"] {
+      font-size: 12px;
+      line-height: 1.05rem;
+    }
+
+    .text-xs {
+      font-size: 13px;
+      line-height: 1.15rem;
+    }
+
+    .text-sm {
+      font-size: 15px;
+      line-height: 1.3rem;
+    }
+  }
 }

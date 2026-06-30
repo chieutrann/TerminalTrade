@@ -448,11 +448,11 @@ export default function TopBar() {
 
   return (
     <>
-    <div className="h-14 min-h-14 shrink-0 border-b border-border bg-card px-3 py-1" data-testid="topbar">
-      <div className="flex min-w-0 items-center justify-between">
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className="shrink-0 border-b border-border bg-card px-2 py-1 sm:h-14 sm:min-h-14 sm:px-3" data-testid="topbar">
+      <div className="flex min-w-0 items-start justify-between gap-2 sm:items-center">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-nowrap">
         <Select value={symbol} onValueChange={setSymbol}>
-          <SelectTrigger className="h-9 w-[126px] shrink-0 border-border bg-secondary/50 font-mono text-sm font-bold shadow-none sm:w-[180px] sm:text-lg [&_[data-symbol-source]]:hidden" data-testid="select-symbol">
+          <SelectTrigger className="order-1 h-9 w-[126px] shrink-0 border-border bg-secondary/50 font-mono text-sm font-bold shadow-none sm:order-none sm:w-[180px] sm:text-lg [&_[data-symbol-source]]:hidden" data-testid="select-symbol">
             <SelectValue placeholder="Select Symbol" />
           </SelectTrigger>
           <SelectContent className="w-[220px] sm:w-[240px]">
@@ -485,50 +485,54 @@ export default function TopBar() {
           <span className="font-semibold text-foreground">{dataSourceLabel}</span>
         </div>
 
-        <div className="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
-          <div className="flex min-w-max items-center gap-1">
-            {sortedFavoriteIntervals.map((item) => {
-              const chartInterval = intervalToChartInterval(item);
-              if (!chartInterval) return null;
-              const active = interval === chartInterval;
-              const intervalKey = normalizeIntervalKey(item) ?? item;
-              const disabledReason = intervalDisabledReason({
-                label: formatIntervalMenuLabel(intervalKey),
-                value: intervalKey,
-                kind: intervalKey.endsWith('t') ? 'tick' : 'time',
-              });
-              const disabled = disabledReason !== null;
-              return (
-                <Button
-                  key={intervalKey}
-                  variant="ghost"
-                  size="sm"
-                  disabled={disabled}
-                  title={disabledReason ?? undefined}
-                  className={`h-8 min-w-9 rounded-md px-2.5 font-mono text-xs ${
-                    active && !disabled
-                      ? 'bg-primary text-primary-foreground shadow-[0_0_18px_rgba(139,92,246,0.45)]'
-                      : disabled
-                        ? 'cursor-not-allowed text-muted-foreground/35 opacity-100'
-                        : 'text-muted-foreground hover:bg-secondary'
-                  }`}
-                  onClick={() => {
-                    if (!disabled) setInterval(chartInterval);
-                  }}
-                  data-testid={`btn-interval-${intervalKey}`}
-                >
-                  {formatIntervalButton(intervalKey)}
-                </Button>
-              );
-            })}
+        <div className="order-3 -mx-2 flex w-[calc(100%+1rem)] flex-none items-center px-2 sm:order-none sm:mx-0 sm:min-w-0 sm:flex-1 sm:px-0">
+          <div className="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
+            <div className="flex min-w-max items-center gap-1">
+              {sortedFavoriteIntervals.map((item) => {
+                const chartInterval = intervalToChartInterval(item);
+                if (!chartInterval) return null;
+                const active = interval === chartInterval;
+                const intervalKey = normalizeIntervalKey(item) ?? item;
+                const disabledReason = intervalDisabledReason({
+                  label: formatIntervalMenuLabel(intervalKey),
+                  value: intervalKey,
+                  kind: intervalKey.endsWith('t') ? 'tick' : 'time',
+                });
+                const disabled = disabledReason !== null;
+                return (
+                  <Button
+                    key={intervalKey}
+                    variant="ghost"
+                    size="sm"
+                    disabled={disabled}
+                    title={disabledReason ?? undefined}
+                    className={`h-8 min-w-9 rounded-md px-2.5 font-mono text-xs ${
+                      active && !disabled
+                        ? 'bg-primary text-primary-foreground shadow-[0_0_18px_rgba(139,92,246,0.45)]'
+                        : disabled
+                          ? 'cursor-not-allowed text-muted-foreground/35 opacity-100'
+                          : 'text-muted-foreground hover:bg-secondary'
+                    }`}
+                    onClick={() => {
+                      if (!disabled) setInterval(chartInterval);
+                    }}
+                    data-testid={`btn-interval-${intervalKey}`}
+                  >
+                    {formatIntervalButton(intervalKey)}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="ml-1 h-8 min-w-8 rounded-md border border-border bg-[#131722] px-2 font-mono text-xs text-slate-200 hover:bg-[#1e222d]"
+                  className="ml-1 h-8 min-w-8 shrink-0 rounded-md border border-border bg-[#131722] px-2 font-mono text-xs text-slate-200 hover:bg-[#1e222d]"
                   data-testid="btn-interval-menu"
+                  title="Intervals and custom intervals"
                 >
                   <ChevronDown className="h-4 w-4" />
                 </Button>
@@ -653,7 +657,7 @@ export default function TopBar() {
         )}
       </div>
 
-      <div className="ml-2 flex shrink-0 items-center gap-2">
+      <div className="ml-0 flex shrink-0 items-center gap-1 sm:ml-2 sm:gap-2">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className={`h-2.5 w-2.5 rounded-full ${status === 'connected' ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]' : 'bg-red-500'}`} />
           <span className="hidden capitalize sm:inline">{status}</span>
@@ -669,11 +673,10 @@ export default function TopBar() {
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </Button>
       </div>
-      </div>
 
       {displayCandle && (
         <div
-          className="scrollbar-hidden flex h-10 max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] leading-10 sm:text-xs"
+          className="scrollbar-hidden flex h-7 max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] leading-7 sm:h-10 sm:text-xs sm:leading-10"
           data-testid="candle-ohlc"
           title={`${hoveredCandle ? 'Hovered' : 'Latest'} ${interval} candle OHLC`}
         >

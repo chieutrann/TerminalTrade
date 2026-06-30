@@ -19,8 +19,8 @@ function BottomNav({ activePanel, onChange }: { activePanel: BottomPanel; onChan
     }`;
 
   return (
-    <div className="h-14 w-full max-w-full shrink-0 overflow-x-hidden border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-      <div className="flex h-full min-w-0 items-center">
+    <div className="min-h-14 w-full max-w-full shrink-0 overflow-x-hidden border-t border-border bg-card/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur">
+      <div className="flex h-14 min-w-0 items-center">
         <button type="button" className={itemClass(activePanel === null)} onClick={() => onChange(null)}>
           <BarChart3 className="h-5 w-5" />
           <span>Chart</span>

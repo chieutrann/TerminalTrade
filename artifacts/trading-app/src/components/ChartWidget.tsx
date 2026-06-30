@@ -41,7 +41,7 @@ import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 const DEFAULT_RSI_PANEL_HEIGHT = 25;
 const DEFAULT_RSI_VALUE_RANGE = { from: 0, to: 100 };
 const CHART_RIGHT_OFFSET_BARS = 12;
-const MAIN_CHART_MIN_HEIGHT = 260;
+const MAIN_CHART_MIN_HEIGHT = 180;
 const TIME_AXIS_HEIGHT = 32;
 const HOVERED_CANDLE_EVENT = "terminal-trade:hovered-candle";
 
@@ -1149,6 +1149,7 @@ export default function ChartWidget() {
       layout: {
         background: { color: theme === "dark" ? "#000000" : "#ffffff" },
         textColor: theme === "dark" ? "#a78bfa" : "#64748b",
+        fontSize: 13,
       },
       grid: {
         vertLines: {
@@ -1221,6 +1222,7 @@ export default function ChartWidget() {
       layout: {
         background: { color: theme === "dark" ? "#000000" : "#ffffff" },
         textColor: theme === "dark" ? "#94a3b8" : "#64748b",
+        fontSize: 13,
       },
       grid: {
         vertLines: { visible: false },
@@ -2662,7 +2664,7 @@ export default function ChartWidget() {
 
   return (
     <div ref={rootRef} className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-background">
-      <div className="relative min-h-[260px] min-w-0 flex-1 overflow-hidden">
+      <div className="relative min-h-[180px] min-w-0 flex-1 overflow-hidden sm:min-h-[260px]">
         <div
           ref={chartContainerRef}
           className="w-full h-full"
