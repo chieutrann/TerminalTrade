@@ -41,6 +41,7 @@ import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 const DEFAULT_RSI_PANEL_HEIGHT = 25;
 const DEFAULT_RSI_VALUE_RANGE = { from: 0, to: 100 };
 const CHART_RIGHT_OFFSET_BARS = 12;
+const RSI_GUIDE_FORWARD_BARS = 10;
 const MAIN_CHART_MIN_HEIGHT = 180;
 const TIME_AXIS_HEIGHT = 32;
 const HOVERED_CANDLE_EVENT = "terminal-trade:hovered-candle";
@@ -2513,11 +2514,7 @@ export default function ChartWidget() {
         sortedCandlesRef.current.length > 0
           ? sortedCandlesRef.current
           : [...renderCandles].sort((a, b) => a.time - b.time);
-      const visibleTo = visibleLogicalRangeRef.current?.to;
-      const rightExtension =
-        typeof visibleTo === "number"
-          ? Math.max(0, Math.ceil(visibleTo) - indexedCandles.length + 1)
-          : CHART_RIGHT_OFFSET_BARS;
+      const rightExtension = RSI_GUIDE_FORWARD_BARS;
       const rsiLineData = alignLineDataToCandleIndexes(
         visibleRsiData.rsi,
         indexedCandles,
