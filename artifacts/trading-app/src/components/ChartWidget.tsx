@@ -40,6 +40,9 @@ import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
 
 const DEFAULT_RSI_PANEL_HEIGHT = 25;
 const DEFAULT_RSI_VALUE_RANGE = { from: 0, to: 100 };
+const CHART_RIGHT_OFFSET_BARS = 12;
+const MAIN_CHART_MIN_HEIGHT = 260;
+const TIME_AXIS_HEIGHT = 32;
 const HOVERED_CANDLE_EVENT = "terminal-trade:hovered-candle";
 
 function emitHoveredCandle(candle: Candle | null) {
@@ -413,8 +416,13 @@ function alignBaselineDataToCandleIndexes(
 function makeLevelLineData(
   value: number,
   candles: Candle[],
+  rightExtension = 0,
 ): IndexedLinePoint[] {
-  return candles.map((_, index) => ({ time: index as Time, value }));
+  const totalPoints = candles.length + Math.max(0, rightExtension);
+  return Array.from({ length: totalPoints }, (_, index) => ({
+    time: index as Time,
+    value,
+  }));
 }
 
 function alignFieldDataToCandleIndexes<T extends { time: number }>(
@@ -831,6 +839,16 @@ function readSeriesValue(
   return typeof value === "number" ? value : null;
 }
 
+function readPointerPrice<T extends "Candlestick" | "Line">(
+  params: MouseEventParams<Time>,
+  series: ISeriesApi<T> | null,
+): number | null {
+  if (!params.point || !series) return null;
+
+  const price = series.coordinateToPrice(params.point.y);
+  return typeof price === "number" && Number.isFinite(price) ? price : null;
+}
+
 export default function ChartWidget() {
   const {
     symbol,
@@ -913,6 +931,8 @@ export default function ChartWidget() {
   const pendingVisibleLogicalRangeRef = useRef<LogicalRange | null>(null);
   const isSyncingCrosshairRef = useRef(false);
   const renderCandlesRef = useRef<Candle[]>([]);
+  const lastMainPointerPriceRef = useRef<number | null>(null);
+  const lastMainPointerTimeRef = useRef<Time | null>(null);
   const visibleRsiDataRef = useRef<Partial<RsiAdvancedResponse>>({ rsi: [] });
   const visibleLogicalRangeRef = useRef<LogicalRange | null>(null);
   const currentPriceYRef = useRef<number | null>(null);
@@ -1144,7 +1164,7 @@ export default function ChartWidget() {
         timeVisible: true,
         secondsVisible: false,
         barSpacing: 8,
-        rightOffset: 12,
+        rightOffset: CHART_RIGHT_OFFSET_BARS,
         borderVisible: true,
         tickMarkFormatter: (time: Time) => formatIndexedChartTime(time),
       },
@@ -1221,7 +1241,7 @@ export default function ChartWidget() {
         timeVisible: true,
         secondsVisible: true,
         barSpacing: 8,
-        rightOffset: 12,
+        rightOffset: CHART_RIGHT_OFFSET_BARS,
         borderVisible: true,
         borderColor: theme === "dark" ? "rgba(139,92,246,0.22)" : "#e2e8f0",
         tickMarkFormatter: (time: Time) => formatIndexedTimeAxisLabel(time),
@@ -1331,7 +1351,12 @@ export default function ChartWidget() {
 
     isSyncingCrosshairRef.current = true;
 
-    if (source !== "main" && chartRef.current && candlestickSeriesRef.current) {
+    if (
+      source !== "main" &&
+      chartRef.current &&
+      candlestickSeriesRef.current &&
+      lastMainPointerPriceRef.current !== null
+    ) {
       (
         chartRef.current as unknown as {
           setCrosshairPosition?: (
@@ -1340,7 +1365,11 @@ export default function ChartWidget() {
             series: ISeriesApi<"Candlestick">,
           ) => void;
         }
-      ).setCrosshairPosition?.(candle.close, time, candlestickSeriesRef.current);
+      ).setCrosshairPosition?.(
+        lastMainPointerPriceRef.current,
+        time,
+        candlestickSeriesRef.current,
+      );
     }
 
     if (source !== "rsi" && rsiChartRef.current && rsiSeriesRef.current) {
@@ -1418,7 +1447,7 @@ export default function ChartWidget() {
   }, [resizeTimeAxisChart]);
 
   const applyMainLogicalRange = useCallback(
-    (range: LogicalRange | null) => {
+    (range: LogicalRange | null, options?: { syncRsi?: boolean }) => {
       if (!chartRef.current || !range || range.from == null || range.to == null) {
         return;
       }
@@ -1426,7 +1455,9 @@ export default function ChartWidget() {
       visibleLogicalRangeRef.current = range;
       isSyncingLogicalRangeRef.current = true;
       chartRef.current.timeScale().setVisibleLogicalRange(range);
-      rsiChartRef.current?.timeScale().setVisibleLogicalRange(range);
+      if (options?.syncRsi !== false) {
+        rsiChartRef.current?.timeScale().setVisibleLogicalRange(range);
+      }
       timeAxisChartRef.current?.timeScale().setVisibleLogicalRange(range);
       timeAxisChartRef.current?.applyOptions({
         timeScale: {
@@ -1473,8 +1504,7 @@ export default function ChartWidget() {
       width: rsiContainerRef.current.clientWidth,
     });
     rsiChartRef.current.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
-    scheduleSynchronizedRender();
-  }, [scheduleSynchronizedRender]);
+  }, []);
 
   const scheduleRsiResizeSync = useCallback(() => {
     if (rsiResizeFrameRef.current !== null) return;
@@ -1482,9 +1512,8 @@ export default function ChartWidget() {
     rsiResizeFrameRef.current = window.requestAnimationFrame(() => {
       rsiResizeFrameRef.current = null;
       syncRsiChartSize();
-      syncRsiLogicalRange();
     });
-  }, [syncRsiChartSize, syncRsiLogicalRange]);
+  }, [syncRsiChartSize]);
 
   const resizeRsiChart = useCallback(() => {
     requestAnimationFrame(() => {
@@ -1494,7 +1523,18 @@ export default function ChartWidget() {
 
   const applyRsiPanelHeight = useCallback(
     (height: number, options: { commit?: boolean; syncChart?: boolean } = {}) => {
-      const nextHeight = Math.min(70, Math.max(14, height));
+      const rootHeight = rootRef.current?.clientHeight ?? 0;
+      const maxHeight =
+        rootHeight > MAIN_CHART_MIN_HEIGHT + TIME_AXIS_HEIGHT
+          ? Math.max(
+              14,
+              Math.min(
+                70,
+                ((rootHeight - MAIN_CHART_MIN_HEIGHT - TIME_AXIS_HEIGHT) / rootHeight) * 100,
+              ),
+            )
+          : 14;
+      const nextHeight = Math.min(maxHeight, Math.max(14, height));
       rsiPanelHeightRef.current = nextHeight;
 
       if (rsiPanelRef.current) {
@@ -1703,8 +1743,12 @@ export default function ChartWidget() {
 
       if (!param.point) {
         setIsCrosshairOverCurrentPrice(false);
-        clearSyncedCrosshair();
         return;
+      }
+
+      const pointerPrice = readPointerPrice(param, candlestickSeries);
+      if (pointerPrice !== null) {
+        lastMainPointerPriceRef.current = pointerPrice;
       }
 
       const currentPriceY = currentPriceYRef.current;
@@ -1713,14 +1757,24 @@ export default function ChartWidget() {
       );
 
       if (typeof param.time !== "number") {
-        clearSyncedCrosshair();
+        emitHoveredCandle(null);
         return;
       }
 
+      lastMainPointerTimeRef.current = Math.round(param.time) as Time;
       syncCrosshairAtIndex(param.time, "main");
     };
     chart.subscribeCrosshairMove(onCrosshairMove);
     chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+
+    const handlePointerLeave = () => {
+      lastMainPointerPriceRef.current = null;
+      lastMainPointerTimeRef.current = null;
+      setIsCrosshairOverCurrentPrice(false);
+      clearSyncedCrosshair();
+    };
+
+    chartContainerRef.current.addEventListener("pointerleave", handlePointerLeave);
 
     return () => {
       if (synchronizedRenderFrameRef.current !== null) {
@@ -1745,6 +1799,7 @@ export default function ChartWidget() {
       try {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
       } catch {}
+      chartContainerRef.current?.removeEventListener("pointerleave", handlePointerLeave);
       chart.remove();
       chartRef.current = null;
       timeScaleRef.current = null;
@@ -2021,7 +2076,7 @@ export default function ChartWidget() {
       const rsiTs = chart.timeScale();
       const onRsiChange = (range: LogicalRange | null) => {
         if (isSyncingLogicalRangeRef.current) return;
-        applyMainLogicalRange(range);
+        applyMainLogicalRange(range, { syncRsi: false });
       };
       rsiTs.subscribeVisibleLogicalRangeChange(onRsiChange);
       scheduleSynchronizedRender();
@@ -2167,6 +2222,30 @@ export default function ChartWidget() {
           close: c.close,
         }));
       candlestickSeriesRef.current.setData(formattedData);
+      const pointerPrice = lastMainPointerPriceRef.current;
+      const pointerTime = lastMainPointerTimeRef.current;
+      if (
+        pointerPrice !== null &&
+        pointerTime !== null &&
+        chartRef.current &&
+        candlestickSeriesRef.current
+      ) {
+        window.requestAnimationFrame(() => {
+          (
+            chartRef.current as unknown as {
+              setCrosshairPosition?: (
+                price: number,
+                horizontalPosition: Time,
+                series: ISeriesApi<"Candlestick">,
+              ) => void;
+            }
+          ).setCrosshairPosition?.(
+            pointerPrice,
+            pointerTime,
+            candlestickSeriesRef.current!,
+          );
+        });
+      }
       timeAxisSeriesRef.current?.setData(
         sortedCandles.map((_, index) => ({
           time: index as Time,
@@ -2382,6 +2461,11 @@ export default function ChartWidget() {
         sortedCandlesRef.current.length > 0
           ? sortedCandlesRef.current
           : [...renderCandles].sort((a, b) => a.time - b.time);
+      const visibleTo = visibleLogicalRangeRef.current?.to;
+      const rightExtension =
+        typeof visibleTo === "number"
+          ? Math.max(0, Math.ceil(visibleTo) - indexedCandles.length + 1)
+          : CHART_RIGHT_OFFSET_BARS;
       const rsiLineData = alignLineDataToCandleIndexes(
         visibleRsiData.rsi,
         indexedCandles,
@@ -2393,6 +2477,7 @@ export default function ChartWidget() {
       const rsiBandData = makeLevelLineData(
         Math.max(obLevel, osLevel),
         indexedCandles,
+        rightExtension,
       ) as IndexedBaselinePoint[];
 
       rsiBandFillSeriesRef.current?.setData(rsiBandData);
@@ -2460,10 +2545,14 @@ export default function ChartWidget() {
         );
       }
       if (obSeriesRef.current) {
-        obSeriesRef.current.setData(makeLevelLineData(obLevel, indexedCandles));
+        obSeriesRef.current.setData(
+          makeLevelLineData(obLevel, indexedCandles, rightExtension),
+        );
       }
       if (osSeriesRef.current) {
-        osSeriesRef.current.setData(makeLevelLineData(osLevel, indexedCandles));
+        osSeriesRef.current.setData(
+          makeLevelLineData(osLevel, indexedCandles, rightExtension),
+        );
       }
       rsiChartRef.current?.priceScale("right").setVisibleRange(rsiValueRangeRef.current);
       scheduleSynchronizedRender();

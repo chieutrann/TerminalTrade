@@ -448,7 +448,7 @@ export default function TopBar() {
 
   return (
     <>
-    <div className="min-h-14 shrink-0 border-b border-border bg-card px-3 py-1" data-testid="topbar">
+    <div className="h-14 min-h-14 shrink-0 border-b border-border bg-card px-3 py-1" data-testid="topbar">
       <div className="flex min-w-0 items-center justify-between">
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <Select value={symbol} onValueChange={setSymbol}>
