@@ -944,6 +944,7 @@ export default function ChartWidget() {
   const [isRsiLegendCollapsed, setIsRsiLegendCollapsed] = useState(false);
   const [hoveredRsiValues, setHoveredRsiValues] =
     useState<HoveredRsiValues | null>(null);
+  const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
   const [allCandles, setAllCandles] = useState<Candle[]>([]);
   const [previewCandle, setPreviewCandle] = useState<Candle | null>(null);
   const [allRsiData, setAllRsiData] = useState<Partial<RsiAdvancedResponse>>({
@@ -1382,6 +1383,7 @@ export default function ChartWidget() {
     }
 
     emitHoveredCandle(null);
+    setHoveredCandle(null);
   }, []);
 
   const setSafeCrosshairPosition = useCallback(
@@ -1418,6 +1420,7 @@ export default function ChartWidget() {
       return;
     }
     emitHoveredCandle(candle);
+    setHoveredCandle(candle);
 
     const time = roundedIndex as Time;
     const rsiPoint = visibleRsiDataRef.current.rsi?.find(
@@ -2720,6 +2723,31 @@ export default function ChartWidget() {
 
   const latestCandle = renderCandles.at(-1) ?? null;
   const latestPrice = latestCandle?.close ?? null;
+  const chartDisplayCandle = hoveredCandle ?? latestCandle;
+  const chartDisplayChange =
+    chartDisplayCandle !== null ? chartDisplayCandle.close - chartDisplayCandle.open : null;
+  const chartDisplayChangePercent =
+    chartDisplayCandle !== null && chartDisplayCandle.open !== 0
+      ? (chartDisplayChange! / chartDisplayCandle.open) * 100
+      : null;
+  const chartDisplayColor =
+    (chartDisplayChange ?? 0) >= 0 ? "text-emerald-400" : "text-red-400";
+  const chartDisplayOhlc = chartDisplayCandle
+    ? [
+        ["O", formatPriceLabel(chartDisplayCandle.open)],
+        ["H", formatPriceLabel(chartDisplayCandle.high)],
+        ["L", formatPriceLabel(chartDisplayCandle.low)],
+        ["C", formatPriceLabel(chartDisplayCandle.close)],
+      ]
+    : [];
+  const chartDisplayChangeLabel =
+    chartDisplayChange === null
+      ? ""
+      : `${chartDisplayChange >= 0 ? "+" : ""}${formatPriceLabel(chartDisplayChange)} (${
+          chartDisplayChangePercent === null
+            ? "--"
+            : `${chartDisplayChangePercent >= 0 ? "+" : ""}${chartDisplayChangePercent.toFixed(2)}%`
+        })`;
   const candleCloseTime =
     latestCandle !== null
       ? candleCloseTimeSeconds(latestCandle.time, interval)
@@ -2758,6 +2786,41 @@ export default function ChartWidget() {
           className="w-full h-full"
           data-testid="main-chart"
         />
+        <div className="pointer-events-none absolute left-2 top-2 z-20 max-w-[calc(100%-86px)] font-mono">
+          <div className="text-sm font-bold leading-5 text-foreground sm:text-base">
+            {/* {symbol} */}
+          
+          </div>
+          
+          { 
+          
+          chartDisplayCandle && (
+
+            
+            
+            <div
+              className="scrollbar-hidden flex max-w-full items-center gap-1 overflow-hidden whitespace-nowrap text-xs leading-4 sm:text-sm"
+              data-testid="chart-candle-ohlc"
+              title={`${hoveredCandle ? "Hovered" : "Latest"} ${interval} candle OHLC`}
+            >
+              <span className="text-foreground sm:hidden">C</span>
+              <span className={chartDisplayColor}>
+                {formatPriceLabel(chartDisplayCandle.close)}
+              </span>
+              {chartDisplayOhlc.map(([label, value]) => (
+                <span key={label} className="hidden sm:inline">
+                  <span className="text-foreground/70">{label}</span>
+                  <span className={chartDisplayColor}>{value}</span>
+                </span>
+              ))}
+              {chartDisplayChangeLabel && (
+                <span className={chartDisplayColor}>{chartDisplayChangeLabel}</span>
+              )}
+            </div>
+            
+            
+          )}
+        </div>
         {latestPrice !== null && currentPriceY !== null && (
           <div
             className={`pointer-events-none absolute right-0 z-[20] flex w-[70px] flex-col items-end justify-center px-1 py-0.5 text-right text-[11px] font-semibold leading-tight text-white shadow-sm transition-opacity ${

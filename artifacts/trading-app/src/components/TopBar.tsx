@@ -3,9 +3,6 @@ import { useTradingStore } from '../store/useTradingStore';
 import {
   useGetSymbols,
   getGetSymbolsQueryKey,
-  useGetCandles,
-  getGetCandlesQueryKey,
-  type Candle,
 } from '@workspace/api-client-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -145,7 +142,6 @@ const CUSTOM_INTERVAL_TYPES = [
 type CustomIntervalUnit = (typeof CUSTOM_INTERVAL_TYPES)[number]['unit'];
 
 type DataSourceId = 'coinbase' | 'binance';
-const HOVERED_CANDLE_EVENT = "terminal-trade:hovered-candle";
 
 const DATA_SOURCES: Array<{ id: DataSourceId; label: string }> = [
   { id: 'coinbase', label: 'Coinbase' },
@@ -247,29 +243,6 @@ function intervalSortValue(interval: string): number {
   }
 }
 
-function formatOhlcPrice(value: number): string {
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-function mergeLiveCandle(base: Candle | null, live: Candle | null): Candle | null {
-  if (!base) return live;
-  if (!live) return base;
-  if (base.time !== live.time) return live.time > base.time ? live : base;
-
-  return {
-    ...live,
-    open: base.open,
-    high: Math.max(base.high, live.high),
-    low: Math.min(base.low, live.low),
-    close: live.close,
-    volume: Math.max(base.volume, live.volume),
-    is_closed: live.is_closed,
-  };
-}
-
 export default function TopBar() {
   const {
     symbol,
@@ -294,21 +267,11 @@ export default function TopBar() {
   const dataSourceLabel =
     DATA_SOURCES.find((source) => source.id === dataSource)?.label ?? dataSource;
 
-  const { status, lastCandle } = useWebsocket(symbol, interval);
-  const { data: latestCandlesData } = useGetCandles(
-    { symbol, interval, limit: 1 },
-    {
-      query: {
-        enabled: !!symbol && !!interval,
-        queryKey: getGetCandlesQueryKey({ symbol, interval, limit: 1 }),
-      },
-    },
-  );
+  const { status } = useWebsocket(symbol, interval);
   const [currentClockTime, setCurrentClockTime] = useState(() => new Date());
   const [customIntervalDialogOpen, setCustomIntervalDialogOpen] = useState(false);
   const [customIntervalType, setCustomIntervalType] = useState<CustomIntervalUnit>('m');
   const [customIntervalValue, setCustomIntervalValue] = useState('');
-  const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
   const chartTimeZoneLabel = useMemo(() => getTimeZoneAbbreviation(chartTimeZone), [chartTimeZone]);
   const secondsSupported = useMemo(() => supportsSecondIntervals(symbol), [symbol]);
   const ticksSupported = useMemo(() => supportsTickIntervals(), []);
@@ -365,15 +328,6 @@ export default function TopBar() {
     return () => window.clearInterval(timerId);
   }, []);
 
-  useEffect(() => {
-    const handleHoveredCandle = (event: Event) => {
-      setHoveredCandle((event as CustomEvent<Candle | null>).detail ?? null);
-    };
-
-    window.addEventListener(HOVERED_CANDLE_EVENT, handleHoveredCandle);
-    return () => window.removeEventListener(HOVERED_CANDLE_EVENT, handleHoveredCandle);
-  }, []);
-
   const customIntervalCandidate = useMemo(() => {
     const value = customIntervalValue.trim();
     if (!/^[1-9][0-9]*$/.test(value)) return null;
@@ -425,26 +379,6 @@ export default function TopBar() {
       setInterval('1m');
     }
   }, [interval, secondsSupported, setInterval, ticksSupported]);
-
-  const latestHistoricalCandle = latestCandlesData?.candles?.at(-1) ?? null;
-  const latestDisplayCandle = mergeLiveCandle(latestHistoricalCandle, lastCandle);
-  const displayCandle = hoveredCandle ?? latestDisplayCandle;
-  const change = displayCandle ? displayCandle.close - displayCandle.open : null;
-  const changePercent = displayCandle && displayCandle.open !== 0 ? (change! / displayCandle.open) * 100 : null;
-  const isUp = (change ?? 0) >= 0;
-  const ohlcValueColorClass = isUp ? 'text-emerald-400' : 'text-red-400';
-  const ohlcValues = displayCandle
-    ? [
-        ['O', formatOhlcPrice(displayCandle.open)],
-        ['H', formatOhlcPrice(displayCandle.high)],
-        ['L', formatOhlcPrice(displayCandle.low)],
-        ['C', formatOhlcPrice(displayCandle.close)],
-      ]
-    : [];
-  const ohlcChangeLabel =
-    change === null
-      ? ''
-      : `${change >= 0 ? '+' : ''}${formatOhlcPrice(change)} (${changePercent === null ? '--' : `${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%`})`;
 
   return (
     <>
@@ -663,36 +597,7 @@ export default function TopBar() {
           </Button>
         </div>
 
-        {displayCandle && (
-          <div className="hidden shrink-0 items-baseline gap-2 font-mono text-xs sm:flex sm:text-sm">
-            <span className={isUp ? "text-emerald-400" : "text-red-400"}>
-              {formatOhlcPrice(displayCandle.close)}
-            </span>
-            <span className={isUp ? "text-emerald-400" : "text-red-400"}>
-              {changePercent === null ? '' : `${isUp ? '+' : ''}${changePercent.toFixed(2)}%`}
-            </span>
-          </div>
-        )}
       </div>
-
-
-      {displayCandle && (
-        <div
-          className="scrollbar-hidden hidden h-7 max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap font-mono text-xs leading-7 sm:flex sm:h-10 sm:leading-10"
-          data-testid="candle-ohlc"
-          title={`${hoveredCandle ? 'Hovered' : 'Latest'} ${interval} candle OHLC`}
-        >
-          {ohlcValues.map(([label, value]) => (
-            <span key={label}>
-              <span className="text-black">{label}</span>
-              <span className={ohlcValueColorClass}>{value}</span>
-            </span>
-          ))}
-          {ohlcChangeLabel && (
-            <span className={ohlcValueColorClass}>{ohlcChangeLabel}</span>
-          )}
-        </div>
-      )}
     </div>
 
     <Dialog open={customIntervalDialogOpen} onOpenChange={setCustomIntervalDialogOpen}>
