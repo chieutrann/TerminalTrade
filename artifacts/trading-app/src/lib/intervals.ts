@@ -28,7 +28,8 @@ const UNIT_SECONDS: Record<IntervalUnit, number> = {
 };
 
 export function parseIntervalConfig(interval: string): IntervalConfig | null {
-  const match = interval.trim().toLowerCase().match(INTERVAL_PATTERN);
+  const normalized = interval.trim().replace(/^([1-9][0-9]*)M$/, "$1mo").toLowerCase();
+  const match = normalized.match(INTERVAL_PATTERN);
   if (!match) return null;
 
   const value = Number.parseInt(match[1], 10);
@@ -43,7 +44,7 @@ export function parseIntervalConfig(interval: string): IntervalConfig | null {
     unit === "w"
       ? `${value * 7}d`
       : unit === "mo"
-        ? `${value * 30}d`
+        ? `${value}mo`
         : `${value}${unit}`;
 
   return {

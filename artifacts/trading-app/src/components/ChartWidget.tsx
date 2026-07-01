@@ -37,6 +37,7 @@ import {
 } from "@workspace/api-client-react";
 import { useWebsocket } from "../hooks/useWebsocket";
 import { ChevronDown, ChevronUp, GripHorizontal } from "lucide-react";
+import { parseIntervalConfig } from "../lib/intervals";
 
 const DEFAULT_RSI_PANEL_HEIGHT = 25;
 const DEFAULT_RSI_VALUE_RANGE = { from: 0, to: 100 };
@@ -310,11 +311,11 @@ function intervalToSeconds(interval: string): number | null {
 }
 
 function candleCloseTimeSeconds(candleOpenSeconds: number, interval: string): number | null {
-  const normalized = interval.trim();
-  const monthMatch = normalized.match(/^(\d+)?M$/);
+  const normalized = interval.trim().toLowerCase();
+  const monthMatch = normalized.match(/^(\d+)mo$/);
   const monthStep = monthMatch
-    ? Number(monthMatch[1] ?? 1)
-    : normalized.toLowerCase() === "30d"
+    ? Number(monthMatch[1])
+    : normalized === "30d"
       ? 1
       : null;
 
@@ -480,6 +481,43 @@ function latestOpenCandle(candles: Candle[] | undefined): Candle | null {
     .sort((a, b) => a.time - b.time);
 
   return openCandles?.at(-1) ? { ...openCandles.at(-1)!, is_closed: false } : null;
+}
+
+function nextIntervalStartTime(time: number, interval: string): number | null {
+  const config = parseIntervalConfig(interval);
+  if (!config) return null;
+
+  if (config.unit === "mo") {
+    const date = new Date(time * 1000);
+    return Math.floor(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth() + config.value,
+        1,
+        0,
+        0,
+        0,
+        0,
+      ) / 1000,
+    );
+  }
+
+  return time + config.seconds;
+}
+
+function nextPreviewCandleFromClosed(candle: Candle, interval: string): Candle | null {
+  const nextTime = nextIntervalStartTime(candle.time, interval);
+  if (nextTime === null) return null;
+
+  return {
+    time: nextTime,
+    open: candle.close,
+    high: candle.close,
+    low: candle.close,
+    close: candle.close,
+    volume: 0,
+    is_closed: false,
+  };
 }
 
 function mergePreviewCandle(current: Candle | null, incoming: Candle): Candle {
@@ -2623,9 +2661,11 @@ export default function ChartWidget() {
   useEffect(() => {
     if (lastCandle) {
       if (lastCandle.is_closed === true) {
-        setPreviewCandle((current) =>
-          current?.time === lastCandle.time ? null : current,
-        );
+        const nextPreviewCandle = nextPreviewCandleFromClosed(lastCandle, interval);
+        setPreviewCandle((current) => {
+          if (current && current.time > lastCandle.time) return current;
+          return nextPreviewCandle;
+        });
         if (lockedCandlesRef.current.some((candle) => candle.time === lastCandle.time)) {
           return;
         }
@@ -2639,8 +2679,8 @@ export default function ChartWidget() {
         setAllRsiData((current) =>
           buildPreviewRsiData(
             current,
-            lockedCandles,
-            { ...lastCandle, is_closed: false },
+            nextPreviewCandle ? [...lockedCandles, nextPreviewCandle] : lockedCandles,
+            nextPreviewCandle,
             {
               period: rsiPeriod,
               source: rsiSource,
@@ -2665,6 +2705,7 @@ export default function ChartWidget() {
     }
   }, [
     lastCandle,
+    interval,
     rsiPeriod,
     rsiSource,
     smaMa.show,
